@@ -9,7 +9,15 @@ import {
 } from "@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge";
 import { cn } from "@/lib/utils";
 import { EFFECT_LABELS, summarizeLayer, type Layer } from "@/lib/dither/effects";
-import { PaletteControl, SegControl, SliderControl, ToggleControl } from "./controls";
+import {
+  ColorControl,
+  PaletteControl,
+  SegControl,
+  SliderControl,
+  ToggleControl,
+} from "./controls";
+import { CurvesEditor } from "./curves-editor";
+import type { CurvesParams } from "@/lib/dither/curves";
 
 type LayerCardProps = {
   layer: Layer;
@@ -231,6 +239,17 @@ function LayerBody({
         </>
       );
     }
+    case "curves":
+      return (
+        <CurvesEditor
+          value={layer.params}
+          onChange={(next: CurvesParams) =>
+            onPatch(next as unknown as Record<string, unknown>)
+          }
+          onInteractStart={onStart}
+          onInteractEnd={onCommit}
+        />
+      );
     case "halftone": {
       const p = layer.params;
       return (
@@ -291,6 +310,11 @@ function LayerBody({
             value={p.palette}
             onChange={(v) => onPatch({ palette: v })}
           />
+          <ToggleControl
+            name="preserve colors"
+            value={p.preserveColors}
+            onChange={(v) => onPatch({ preserveColors: v })}
+          />
         </>
       );
     }
@@ -319,10 +343,64 @@ function LayerBody({
             value={p.palette}
             onChange={(v) => onPatch({ palette: v })}
           />
+          <SliderControl
+            name="strength"
+            min={0}
+            max={100}
+            value={p.strength}
+            unit="%"
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ strength: v })}
+          />
+          <SliderControl
+            name="pre-blur"
+            min={0}
+            max={5}
+            value={p.preBlur}
+            unit="px"
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ preBlur: v })}
+          />
+          <SliderControl
+            name="diffusion"
+            min={0}
+            max={200}
+            value={p.diffusion}
+            unit="%"
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ diffusion: v })}
+          />
+          <SliderControl
+            name="matrix scale"
+            min={16}
+            max={128}
+            value={p.matrixScale}
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ matrixScale: v })}
+          />
+          <SliderControl
+            name="jitter"
+            min={0}
+            max={100}
+            value={p.jitter}
+            unit="%"
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ jitter: v })}
+          />
           <ToggleControl
             name="serpentine scan"
             value={p.serpentine}
             onChange={(v) => onPatch({ serpentine: v })}
+          />
+          <ToggleControl
+            name="preserve colors"
+            value={p.preserveColors}
+            onChange={(v) => onPatch({ preserveColors: v })}
           />
         </>
       );
@@ -341,6 +419,242 @@ function LayerBody({
           onChange={(v) => onPatch({ amount: v })}
         />
       );
+    case "grain": {
+      const p = layer.params;
+      return (
+        <>
+          <SliderControl
+            name="amount"
+            min={0}
+            max={100}
+            value={p.amount}
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ amount: v })}
+          />
+          <SliderControl
+            name="size"
+            min={0.5}
+            max={6}
+            step={0.1}
+            value={p.size}
+            unit="px"
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ size: v })}
+          />
+          <SliderControl
+            name="roughness"
+            min={0}
+            max={100}
+            value={p.roughness}
+            unit="%"
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ roughness: v })}
+          />
+          <SliderControl
+            name="aspect"
+            min={-100}
+            max={100}
+            value={p.aspect}
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ aspect: v })}
+          />
+          <SliderControl
+            name="shadows"
+            min={0}
+            max={200}
+            value={p.shadows}
+            unit="%"
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ shadows: v })}
+          />
+          <SliderControl
+            name="highlights"
+            min={0}
+            max={200}
+            value={p.highlights}
+            unit="%"
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ highlights: v })}
+          />
+          <SliderControl
+            name="falloff"
+            min={0.3}
+            max={3}
+            step={0.05}
+            value={p.falloff}
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ falloff: v })}
+          />
+          <SliderControl
+            name="color amount"
+            min={0}
+            max={100}
+            value={p.colorAmount}
+            unit="%"
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ colorAmount: v })}
+          />
+          <SliderControl
+            name="tint strength"
+            min={0}
+            max={100}
+            value={p.tintStrength}
+            unit="%"
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ tintStrength: v })}
+          />
+          <ColorControl
+            name="tint color"
+            value={p.tintColor}
+            onChange={(v) => onPatch({ tintColor: v })}
+          />
+          <SegControl
+            name="blend"
+            value={p.blend}
+            options={[
+              { value: "add", label: "add" },
+              { value: "multiply", label: "multiply" },
+              { value: "screen", label: "screen" },
+            ]}
+            onChange={(v) => onPatch({ blend: v })}
+          />
+          <SliderControl
+            name="seed"
+            min={0}
+            max={9999}
+            value={p.seed}
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ seed: v })}
+          />
+        </>
+      );
+    }
+    case "duotone": {
+      const p = layer.params;
+      return (
+        <>
+          <SliderControl
+            name="cell size"
+            min={2}
+            max={48}
+            value={p.tile}
+            unit="px"
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ tile: v })}
+          />
+          <SliderControl
+            name="length"
+            min={0}
+            max={2}
+            step={0.05}
+            value={p.lengthScale}
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ lengthScale: v })}
+          />
+          <SliderControl
+            name="thickness"
+            min={0.02}
+            max={1}
+            step={0.02}
+            value={p.thickness}
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ thickness: v })}
+          />
+          <SliderControl
+            name="brightness offset"
+            min={-0.5}
+            max={0.5}
+            step={0.02}
+            value={p.brightnessOffset}
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ brightnessOffset: v })}
+          />
+          <SliderControl
+            name="contrast"
+            min={0.5}
+            max={3}
+            step={0.05}
+            value={p.contrast}
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ contrast: v })}
+          />
+          <SliderControl
+            name="blur radius"
+            min={0}
+            max={20}
+            value={p.blurRadius}
+            unit="px"
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ blurRadius: v })}
+          />
+          <SliderControl
+            name="blur passes"
+            min={0}
+            max={3}
+            value={p.blurPasses}
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ blurPasses: v })}
+          />
+          <SliderControl
+            name="gradient align"
+            min={0}
+            max={1}
+            step={0.05}
+            value={p.gradientAlign}
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ gradientAlign: v })}
+          />
+          <SliderControl
+            name="back opacity"
+            min={0}
+            max={1}
+            step={0.05}
+            value={p.backOpacity}
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ backOpacity: v })}
+          />
+          <ColorControl
+            name="dash color"
+            value={p.dashColor}
+            onChange={(v) => onPatch({ dashColor: v })}
+          />
+          <ColorControl
+            name="back color"
+            value={p.backColor}
+            onChange={(v) => onPatch({ backColor: v })}
+          />
+          <ToggleControl
+            name="original colors"
+            value={p.originalColors}
+            onChange={(v) => onPatch({ originalColors: v })}
+          />
+          <ToggleControl
+            name="inverted"
+            value={p.inverted}
+            onChange={(v) => onPatch({ inverted: v })}
+          />
+        </>
+      );
+    }
   }
 }
 

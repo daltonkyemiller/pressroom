@@ -27,9 +27,22 @@ import {
 import { computeWorkDims, exportPNG, renderPipeline } from "@/lib/dither/pipeline";
 import type { Edge } from "@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge";
 
+// Working resolution for both interactive preview and final commit — keeping
+// them identical means scale-sensitive effects (halftone, dither, duotone)
+// look the same while scrubbing as they do when released. Export still
+// runs at the source's native resolution via renderForExport.
 const MAX_DIM = 900;
-const PREVIEW_MAX_DIM = 500;
-const EFFECT_KINDS: EffectKind[] = ["blur", "color", "halftone", "dither", "invert", "noise"];
+const EFFECT_KINDS: EffectKind[] = [
+  "blur",
+  "color",
+  "curves",
+  "halftone",
+  "dither",
+  "duotone",
+  "invert",
+  "noise",
+  "grain",
+];
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 16;
 
@@ -64,6 +77,7 @@ export default function App() {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState<Pan>({ x: 0, y: 0 });
   const [panning, setPanning] = useState(false);
+  const [showOriginal, setShowOriginal] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const canvasWrapRef = useRef<HTMLDivElement>(null);
@@ -71,26 +85,41 @@ export default function App() {
   const [stageSize, setStageSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const nextIdRef = useRef(3);
-  const interactingRef = useRef(false);
   const rafIdRef = useRef<number | null>(null);
   const pendingRef = useRef(false);
   // ---------- render ----------
   const render = useCallback(
-    (preview: boolean) => {
+    (original = false) => {
       const canvas = canvasRef.current;
       if (!canvas || !sourceImage) return;
       const t0 = performance.now();
-      const maxDim = preview ? PREVIEW_MAX_DIM : MAX_DIM;
-      const { imgData, width, height } = renderPipeline(sourceImage, layers, maxDim);
+      if (original) {
+        const dims = computeWorkDims(sourceImage, MAX_DIM);
+        canvas.width = dims.width;
+        canvas.height = dims.height;
+        const c = canvas.getContext("2d")!;
+        c.imageSmoothingEnabled = true;
+        c.imageSmoothingQuality = "high";
+        c.drawImage(sourceImage, 0, 0, dims.width, dims.height);
+        setStatusTime(`0ms · original`);
+        setStatusDim(`${dims.width} × ${dims.height}`);
+        return;
+      }
+      const { imgData, width, height } = renderPipeline(sourceImage, layers, MAX_DIM);
       canvas.width = width;
       canvas.height = height;
       canvas.getContext("2d", { willReadFrequently: true })!.putImageData(imgData, 0, 0);
       const ms = Math.round(performance.now() - t0);
-      setStatusTime(`${ms}ms${preview ? " · preview" : ""}`);
+      setStatusTime(`${ms}ms`);
       setStatusDim(`${width} × ${height}`);
     },
     [sourceImage, layers],
   );
+
+  const showOriginalRef = useRef(showOriginal);
+  useEffect(() => {
+    showOriginalRef.current = showOriginal;
+  }, [showOriginal]);
 
   const scheduleRender = useCallback(() => {
     if (rafIdRef.current !== null) {
@@ -99,7 +128,7 @@ export default function App() {
     }
     rafIdRef.current = requestAnimationFrame(() => {
       rafIdRef.current = null;
-      render(interactingRef.current);
+      render(showOriginalRef.current);
       if (pendingRef.current) {
         pendingRef.current = false;
         scheduleRender();
@@ -107,29 +136,10 @@ export default function App() {
     });
   }, [render]);
 
-  const endInteraction = useCallback(() => {
-    if (!interactingRef.current) return;
-    interactingRef.current = false;
-    scheduleRender();
-  }, [scheduleRender]);
-
   // ---------- effects: schedule render whenever inputs change ----------
   useEffect(() => {
     scheduleRender();
-  }, [sourceImage, layers, scheduleRender]);
-
-  // ---------- global cleanup of interaction flag ----------
-  useEffect(() => {
-    const off = () => endInteraction();
-    window.addEventListener("pointerup", off);
-    window.addEventListener("pointercancel", off);
-    window.addEventListener("blur", off);
-    return () => {
-      window.removeEventListener("pointerup", off);
-      window.removeEventListener("pointercancel", off);
-      window.removeEventListener("blur", off);
-    };
-  }, [endInteraction]);
+  }, [sourceImage, layers, showOriginal, scheduleRender]);
 
   // ---------- track stage size for fit-to-container display ----------
   useEffect(() => {
@@ -186,8 +196,20 @@ export default function App() {
   }, []);
 
   const startPan = (e: React.PointerEvent) => {
-    // Allow pan when zoomed in, or with middle/right click always
-    if (zoom <= 1 && e.button === 0) return;
+    if (zoom <= 1 && e.button === 0) {
+      // At natural zoom there's nothing to pan, so a hold becomes the
+      // before/after comparison: press = original, release = effected.
+      e.preventDefault();
+      setShowOriginal(true);
+      const stop = () => {
+        setShowOriginal(false);
+        window.removeEventListener("pointerup", stop);
+        window.removeEventListener("pointercancel", stop);
+      };
+      window.addEventListener("pointerup", stop);
+      window.addEventListener("pointercancel", stop);
+      return;
+    }
     e.preventDefault();
     setPanning(true);
     const startX = e.clientX;
@@ -312,18 +334,48 @@ export default function App() {
     link.click();
   }, [sourceImage, layers]);
 
-  // ---------- stage drag/drop ----------
-  const onStageDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setStageDragHover(true);
-  };
-  const onStageDragLeave = () => setStageDragHover(false);
-  const onStageDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setStageDragHover(false);
-    const file = e.dataTransfer.files[0];
-    if (file) loadFile(file);
-  };
+  // ---------- window-level drag/drop ----------
+  // Counter handles nested elements emitting their own enter/leave events.
+  const dragCounterRef = useRef(0);
+  useEffect(() => {
+    const hasFile = (e: DragEvent) =>
+      e.dataTransfer && Array.from(e.dataTransfer.types).includes("Files");
+
+    const onEnter = (e: DragEvent) => {
+      if (!hasFile(e)) return;
+      e.preventDefault();
+      dragCounterRef.current += 1;
+      if (dragCounterRef.current === 1) setStageDragHover(true);
+    };
+    const onOver = (e: DragEvent) => {
+      if (!hasFile(e)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    };
+    const onLeave = (e: DragEvent) => {
+      if (!hasFile(e)) return;
+      dragCounterRef.current = Math.max(0, dragCounterRef.current - 1);
+      if (dragCounterRef.current === 0) setStageDragHover(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      e.preventDefault();
+      dragCounterRef.current = 0;
+      setStageDragHover(false);
+      const file = e.dataTransfer?.files[0];
+      if (file) loadFile(file);
+    };
+
+    window.addEventListener("dragenter", onEnter);
+    window.addEventListener("dragover", onOver);
+    window.addEventListener("dragleave", onLeave);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragenter", onEnter);
+      window.removeEventListener("dragover", onOver);
+      window.removeEventListener("dragleave", onLeave);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, [loadFile]);
 
   // ---------- status bar text ----------
   const statusStack = useMemo(() => {
@@ -356,8 +408,17 @@ export default function App() {
   }, [sourceImage, stageSize]);
 
   return (
-    <div className="grid h-full grid-cols-[320px_1fr] font-sans text-sm">
+    <div className="relative grid h-full grid-cols-[320px_1fr] font-sans text-sm">
       <GooFilter />
+
+      {stageDragHover && (
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-background/70 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-3 border-2 border-dashed border-foreground bg-background px-8 py-6">
+            <IconImagePlus className="size-6" />
+            <span className="text-sm tracking-widest uppercase">drop image to load</span>
+          </div>
+        </div>
+      )}
 
       {/* ===== SIDEBAR ===== */}
       <aside className="flex flex-col border-r border-border bg-background overflow-hidden">
@@ -393,10 +454,8 @@ export default function App() {
                   onToggle={() => toggleLayer(layer.id)}
                   onRemove={() => removeLayer(layer.id)}
                   onExpand={() => expandLayer(layer.id)}
-                  onInteractStart={() => {
-                    interactingRef.current = true;
-                  }}
-                  onInteractEnd={() => endInteraction()}
+                  onInteractStart={() => {}}
+                  onInteractEnd={() => {}}
                   onReorder={reorderLayer}
                 />
               ))
@@ -495,10 +554,6 @@ export default function App() {
         <div
           ref={stageRef}
           className="relative flex flex-1 items-center justify-center overflow-hidden p-10"
-          onDragEnter={onStageDragOver}
-          onDragOver={onStageDragOver}
-          onDragLeave={onStageDragLeave}
-          onDrop={onStageDrop}
         >
           {!sourceImage && (
             <div className="max-w-sm text-center">
@@ -548,7 +603,9 @@ export default function App() {
                 className="pointer-events-none absolute -top-5 text-xs tracking-widest text-muted-foreground uppercase"
                 style={{ right: `${-(canvasDisplayDims.width * (zoom - 1))}px` }}
               >
-                {activeCount} active · {Math.round(zoom * 100)}%
+                {showOriginal
+                  ? "original"
+                  : `${activeCount} active · ${Math.round(zoom * 100)}%`}
               </span>
               <div
                 ref={canvasWrapRef}

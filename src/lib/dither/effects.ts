@@ -1,7 +1,25 @@
 import { BAYER4, BAYER8, KERNELS } from "./kernels";
 import { PALETTES, nearestColor, type PaletteId } from "./palettes";
+import { applyDuotoneShader, DUOTONE_DEFAULTS, type DuotoneParams } from "./shader-duotone";
+import { applyGrain, GRAIN_DEFAULTS, type GrainParams } from "./grain";
+import {
+  applyCurves,
+  CURVES_DEFAULTS,
+  isIdentityCurve,
+  type CurveChannel,
+  type CurvesParams,
+} from "./curves";
 
-export type EffectKind = "blur" | "color" | "halftone" | "dither" | "invert" | "noise";
+export type EffectKind =
+  | "blur"
+  | "color"
+  | "curves"
+  | "halftone"
+  | "dither"
+  | "invert"
+  | "noise"
+  | "grain"
+  | "duotone";
 
 export type BlurParams = { radius: number };
 export type ColorParams = { contrast: number; brightness: number; gamma: number; saturation: number };
@@ -13,6 +31,7 @@ export type HalftoneParams = {
   palette: PaletteId;
   goo: number;
   spread: number;
+  preserveColors: boolean;
 };
 export type DitherAlgo =
   | "floyd"
@@ -23,17 +42,30 @@ export type DitherAlgo =
   | "bayer4"
   | "bayer8"
   | "threshold";
-export type DitherParams = { algo: DitherAlgo; palette: PaletteId; serpentine: boolean };
+export type DitherParams = {
+  algo: DitherAlgo;
+  palette: PaletteId;
+  serpentine: boolean;
+  preserveColors: boolean;
+  strength: number; // 0..100 — blend dithered output back with original
+  preBlur: number; // 0..5 px — soften input before dithering
+  diffusion: number; // 0..200 % — scales error diffusion (error-diffusion algos)
+  matrixScale: number; // 16..128 — Bayer matrix amplitude
+  jitter: number; // 0..100 — per-pixel deterministic random offset
+};
 export type InvertParams = Record<string, never>;
 export type NoiseParams = { amount: number };
 
 export type ParamsByKind = {
   blur: BlurParams;
   color: ColorParams;
+  curves: CurvesParams;
   halftone: HalftoneParams;
   dither: DitherParams;
   invert: InvertParams;
   noise: NoiseParams;
+  grain: GrainParams;
+  duotone: DuotoneParams;
 };
 
 export type Layer = {
@@ -49,28 +81,55 @@ export type Layer = {
 export const EFFECT_DEFAULTS: { [K in EffectKind]: ParamsByKind[K] } = {
   blur: { radius: 2 },
   color: { contrast: 0, brightness: 0, gamma: 1, saturation: 100 },
-  halftone: { size: 8, angle: 45, shape: "dot", palette: "bw", goo: 0, spread: 100 },
-  dither: { algo: "floyd", palette: "bw", serpentine: true },
+  curves: CURVES_DEFAULTS,
+  halftone: {
+    size: 8,
+    angle: 45,
+    shape: "dot",
+    palette: "bw",
+    goo: 0,
+    spread: 100,
+    preserveColors: false,
+  },
+  dither: {
+    algo: "floyd",
+    palette: "bw",
+    serpentine: true,
+    preserveColors: false,
+    strength: 100,
+    preBlur: 0,
+    diffusion: 100,
+    matrixScale: 64,
+    jitter: 0,
+  },
   invert: {},
   noise: { amount: 20 },
+  grain: GRAIN_DEFAULTS,
+  duotone: DUOTONE_DEFAULTS,
 };
 
 export const EFFECT_LABELS: Record<EffectKind, string> = {
   blur: "Blur",
   color: "Color adjust",
+  curves: "Curves",
   halftone: "Halftone",
   dither: "Dither",
   invert: "Invert",
   noise: "Noise",
+  grain: "Grain",
+  duotone: "Duotone dashes",
 };
 
 export const EFFECT_DESCRIPTIONS: Record<EffectKind, string> = {
   blur: "soften input",
   color: "contrast · gamma",
+  curves: "tonal map · per channel",
   halftone: "dot tone",
   dither: "8 algorithms",
   invert: "flip values",
-  noise: "grain",
+  noise: "uniform grain",
+  grain: "film · tonal response",
+  duotone: "shader · capsule grid",
 };
 
 // ---------- BLUR ----------
@@ -174,7 +233,9 @@ function applyHalftone(img: ImageData, p: HalftoneParams): ImageData {
   shapes.width = w;
   shapes.height = h;
   const sctx = shapes.getContext("2d")!;
-  sctx.fillStyle = `rgb(${darkest[0]},${darkest[1]},${darkest[2]})`;
+  if (!p.preserveColors) {
+    sctx.fillStyle = `rgb(${darkest[0]},${darkest[1]},${darkest[2]})`;
+  }
 
   const size = p.size;
   const spread = (p.spread || 100) / 100;
@@ -200,6 +261,10 @@ function applyHalftone(img: ImageData, p: HalftoneParams): ImageData {
       const L = (0.2126 * src[i] + 0.7152 * src[i + 1] + 0.0722 * src[i + 2]) / 255;
       const ink = 1 - L;
       if (ink < 0.02) continue;
+
+      if (p.preserveColors) {
+        sctx.fillStyle = `rgb(${src[i]},${src[i + 1]},${src[i + 2]})`;
+      }
 
       if (p.shape === "dot") {
         const r = size * 0.55 * spread * Math.sqrt(ink);
@@ -263,7 +328,11 @@ function applyHalftone(img: ImageData, p: HalftoneParams): ImageData {
   out.width = w;
   out.height = h;
   const octx = out.getContext("2d")!;
-  octx.fillStyle = `rgb(${lightest[0]},${lightest[1]},${lightest[2]})`;
+  if (p.preserveColors) {
+    octx.fillStyle = "rgb(255,255,255)";
+  } else {
+    octx.fillStyle = `rgb(${lightest[0]},${lightest[1]},${lightest[2]})`;
+  }
   octx.fillRect(0, 0, w, h);
   octx.drawImage(inkLayer, 0, 0);
 
@@ -275,8 +344,45 @@ function applyDither(img: ImageData, p: DitherParams): ImageData {
   const w = img.width;
   const h = img.height;
   const data = img.data;
-  const palette = PALETTES[p.palette];
+  const userPalette = PALETTES[p.palette];
   const algo = p.algo;
+
+  // Snapshot for the strength-blend at the very end (when < 100).
+  const blendMix = Math.max(0, Math.min(1, p.strength / 100));
+  const preStrength = blendMix < 1 ? new Uint8ClampedArray(data) : null;
+
+  // Optional input pre-blur (separable box blur).
+  if (p.preBlur > 0) boxBlur(data, w, h, Math.round(p.preBlur));
+
+  // In preserveColors mode we dither against pure b&w to get a clean
+  // binary mask, then swap the "white" pixels back to the original RGB.
+  // The "dark" pixels use the darkest color from the user's palette
+  // so the palette picker still controls the ink shade.
+  const bwPalette = PALETTES.bw;
+  const palette = p.preserveColors ? bwPalette : userPalette;
+  let darkest = userPalette[0];
+  let original: Uint8ClampedArray | null = null;
+  if (p.preserveColors) {
+    original = new Uint8ClampedArray(data);
+    let dL = 256;
+    for (const c of userPalette) {
+      const L = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+      if (L < dL) {
+        dL = L;
+        darkest = c;
+      }
+    }
+  }
+
+  // Cheap deterministic per-pixel hash → ±jitterAmp in 0..255 space.
+  const jitterAmp = (p.jitter / 100) * 64;
+  const jitterAt = (x: number, y: number) => {
+    if (jitterAmp <= 0) return 0;
+    let n = ((x * 374761393) ^ (y * 668265263)) >>> 0;
+    n = Math.imul(n ^ (n >>> 13), 1274126177);
+    n ^= n >>> 16;
+    return (n / 0xffffffff - 0.5) * 2 * jitterAmp;
+  };
 
   if (algo in KERNELS) {
     const buf = new Float32Array(w * h * 3);
@@ -287,6 +393,7 @@ function applyDither(img: ImageData, p: DitherParams): ImageData {
     }
     const kernel = KERNELS[algo];
     const serp = p.serpentine;
+    const diffMul = p.diffusion / 100;
     for (let y = 0; y < h; y++) {
       const reverse = serp && y % 2 === 1;
       const xStart = reverse ? w - 1 : 0;
@@ -294,16 +401,17 @@ function applyDither(img: ImageData, p: DitherParams): ImageData {
       const xStep = reverse ? -1 : 1;
       for (let x = xStart; x !== xEnd; x += xStep) {
         const idx = (y * w + x) * 3;
-        const r = buf[idx];
-        const g = buf[idx + 1];
-        const b = buf[idx + 2];
+        const j = jitterAt(x, y);
+        const r = buf[idx] + j;
+        const g = buf[idx + 1] + j;
+        const b = buf[idx + 2] + j;
         const [nr, ng, nb] = nearestColor(r, g, b, palette);
         buf[idx] = nr;
         buf[idx + 1] = ng;
         buf[idx + 2] = nb;
-        const er = r - nr;
-        const eg = g - ng;
-        const eb = b - nb;
+        const er = (r - nr) * diffMul;
+        const eg = (g - ng) * diffMul;
+        const eb = (b - nb) * diffMul;
         for (const [dx, dy, wgt] of kernel.weights) {
           const ax = reverse ? x - dx : x + dx;
           const ay = y + dy;
@@ -324,11 +432,11 @@ function applyDither(img: ImageData, p: DitherParams): ImageData {
   } else if (algo === "bayer4" || algo === "bayer8") {
     const matrix = algo === "bayer4" ? BAYER4 : BAYER8;
     const N = matrix.length;
-    const strength = 64;
+    const strength = p.matrixScale;
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         const idx = (y * w + x) * 4;
-        const t = matrix[y % N][x % N] * strength;
+        const t = matrix[y % N][x % N] * strength + jitterAt(x, y);
         const [nr, ng, nb] = nearestColor(
           data[idx] + t,
           data[idx + 1] + t,
@@ -341,11 +449,40 @@ function applyDither(img: ImageData, p: DitherParams): ImageData {
       }
     }
   } else if (algo === "threshold") {
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = (y * w + x) * 4;
+        const j = jitterAt(x, y);
+        const [nr, ng, nb] = nearestColor(data[i] + j, data[i + 1] + j, data[i + 2] + j, palette);
+        data[i] = nr;
+        data[i + 1] = ng;
+        data[i + 2] = nb;
+      }
+    }
+  }
+
+  if (original) {
+    // Post-process: white in the binary result → original color; black → darkest palette ink.
     for (let i = 0; i < data.length; i += 4) {
-      const [nr, ng, nb] = nearestColor(data[i], data[i + 1], data[i + 2], palette);
-      data[i] = nr;
-      data[i + 1] = ng;
-      data[i + 2] = nb;
+      if (data[i] > 127) {
+        data[i] = original[i];
+        data[i + 1] = original[i + 1];
+        data[i + 2] = original[i + 2];
+      } else {
+        data[i] = darkest[0];
+        data[i + 1] = darkest[1];
+        data[i + 2] = darkest[2];
+      }
+    }
+  }
+
+  // Strength: blend the dithered result back over the pre-dither (post-blur)
+  // source. At 100% the result is unchanged; at 0% no dither is visible.
+  if (preStrength) {
+    for (let i = 0; i < data.length; i += 4) {
+      data[i] = preStrength[i] + (data[i] - preStrength[i]) * blendMix;
+      data[i + 1] = preStrength[i + 1] + (data[i + 1] - preStrength[i + 1]) * blendMix;
+      data[i + 2] = preStrength[i + 2] + (data[i + 2] - preStrength[i + 2]) * blendMix;
     }
   }
   return img;
@@ -381,6 +518,8 @@ export function applyLayer(img: ImageData, layer: Layer): ImageData {
       return applyBlur(img, layer.params);
     case "color":
       return applyColor(img, layer.params);
+    case "curves":
+      return applyCurves(img, layer.params);
     case "halftone":
       return applyHalftone(img, layer.params);
     case "dither":
@@ -389,6 +528,10 @@ export function applyLayer(img: ImageData, layer: Layer): ImageData {
       return applyInvert(img);
     case "noise":
       return applyNoise(img, layer.params);
+    case "grain":
+      return applyGrain(img, layer.params);
+    case "duotone":
+      return applyDuotoneShader(img, layer.params);
   }
 }
 
@@ -400,6 +543,18 @@ export function summarizeLayer(layer: Layer): string {
       const p = layer.params;
       return `c${p.contrast} · b${p.brightness} · γ${p.gamma.toFixed(2)}`;
     }
+    case "curves": {
+      const channels: { id: CurveChannel; tag: string }[] = [
+        { id: "rgb", tag: "rgb" },
+        { id: "r", tag: "r" },
+        { id: "g", tag: "g" },
+        { id: "b", tag: "b" },
+      ];
+      const active = channels
+        .filter((c) => !isIdentityCurve(layer.params[c.id]))
+        .map((c) => c.tag);
+      return active.length === 0 ? "identity" : active.join(" · ");
+    }
     case "halftone": {
       const p = layer.params;
       return `${p.shape} · ${p.size}px · ${p.angle}°${p.goo > 0 ? ` · goo ${p.goo}` : ""}`;
@@ -410,5 +565,15 @@ export function summarizeLayer(layer: Layer): string {
       return "flip values";
     case "noise":
       return `amount ${layer.params.amount}`;
+    case "grain": {
+      const p = layer.params;
+      const colorTag =
+        p.colorAmount > 0 ? ` · ${p.colorAmount === 100 ? "color" : `c${p.colorAmount}`}` : "";
+      return `${p.amount} · ${p.size.toFixed(1)}px${colorTag}`;
+    }
+    case "duotone": {
+      const p = layer.params;
+      return `${p.tile}px · t${p.thickness.toFixed(2)} · ×${p.lengthScale.toFixed(2)}`;
+    }
   }
 }

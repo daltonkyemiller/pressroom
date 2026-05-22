@@ -2,6 +2,7 @@ import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { PALETTES, PALETTE_META, type PaletteId } from "@/lib/dither/palettes";
+import { ColorPicker } from "./color-picker";
 import { NumberScrubber } from "./number-scrubber";
 
 // ---------- Scrubber (replaces classic slider) ----------
@@ -146,5 +147,21 @@ export function ToggleControl({ name, value, onChange }: ToggleControlProps) {
       <span className="text-xs tracking-wider lowercase">{name}</span>
       <Switch checked={value} onCheckedChange={onChange} />
     </label>
+  );
+}
+
+// ---------- Color (hex) ----------
+type ColorControlProps = {
+  name: string;
+  value: string;
+  onChange: (v: string) => void;
+};
+
+export function ColorControl({ name, value, onChange }: ColorControlProps) {
+  return (
+    <div className="mb-2 flex items-center justify-between py-1.5">
+      <span className="text-xs tracking-wider lowercase">{name}</span>
+      <ColorPicker value={value} onChange={onChange} />
+    </div>
   );
 }

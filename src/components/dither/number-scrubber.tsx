@@ -115,6 +115,15 @@ function NumberScrubber({
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (disabled) return;
 
+    // Double-click resets to the initial value. Detect here (rather than via
+    // a separate dblclick handler) because pointer capture during a drag can
+    // swallow click/dblclick events.
+    if (event.detail === 2) {
+      event.preventDefault();
+      onValueChange(initialValueRef.current);
+      return;
+    }
+
     const element = event.currentTarget;
     element.setPointerCapture(event.pointerId);
     document.body.classList.add("dragging");
@@ -148,13 +157,8 @@ function NumberScrubber({
     }
   };
 
-  const handleDoubleClick = () => {
-    if (disabled) return;
-    onValueChange(initialValueRef.current);
-  };
-
   return (
-    <div className={cn("space-y-1.5 select-none", className)} onDoubleClick={handleDoubleClick}>
+    <div className={cn("space-y-1.5 select-none", className)}>
       <div
         className={cn(
           "group border-input bg-muted/60 relative flex h-8 cursor-ew-resize select-none items-center rounded-none border text-xs transition-[border-color,box-shadow,background-color]",

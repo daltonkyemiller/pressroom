@@ -1,14 +1,22 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   IconArrowDownToLine,
   IconArrowRotateAnticlockwise,
   IconChevronRight,
   IconEye,
   IconEyeSlash,
+  IconGripDotsVertical,
   IconPlus,
   IconXmark,
 } from "nucleo-pixel";
 import { Link } from "@tanstack/react-router";
+import { draggable, dropTargetForElements } from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
+import { combine } from "@atlaskit/pragmatic-drag-and-drop/combine";
+import {
+  attachClosestEdge,
+  extractClosestEdge,
+  type Edge,
+} from "@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -91,15 +99,18 @@ export default function ForgeApp() {
     }));
   }, []);
 
-  const moveNode = useCallback((id: number, dir: -1 | 1) => {
+  const reorderNode = useCallback((fromId: number, toId: number, edge: Edge) => {
     setDoc((d) => {
-      const idx = d.nodes.findIndex((n) => n.id === id);
-      if (idx < 0) return d;
-      const newIdx = idx + dir;
-      if (newIdx < 0 || newIdx >= d.nodes.length) return d;
+      const fromIdx = d.nodes.findIndex((n) => n.id === fromId);
+      if (fromIdx < 0 || fromId === toId) return d;
       const nodes = [...d.nodes];
-      const [moved] = nodes.splice(idx, 1);
-      nodes.splice(newIdx, 0, moved);
+      const [moved] = nodes.splice(fromIdx, 1);
+      const toIdx = nodes.findIndex((n) => n.id === toId);
+      if (toIdx < 0) {
+        nodes.push(moved);
+      } else {
+        nodes.splice(edge === "top" ? toIdx : toIdx + 1, 0, moved);
+      }
       return { ...d, nodes };
     });
   }, []);
@@ -168,19 +179,23 @@ export default function ForgeApp() {
     }));
   }, []);
 
-  const moveModifier = useCallback(
-    (nodeId: number, modId: number, dir: -1 | 1) => {
+  const reorderModifier = useCallback(
+    (nodeId: number, fromId: number, toId: number, edge: Edge) => {
+      if (fromId === toId) return;
       setDoc((d) => ({
         ...d,
         nodes: d.nodes.map((n) => {
           if (n.id !== nodeId) return n;
-          const idx = n.modifiers.findIndex((m) => m.id === modId);
-          if (idx < 0) return n;
-          const newIdx = idx + dir;
-          if (newIdx < 0 || newIdx >= n.modifiers.length) return n;
+          const fromIdx = n.modifiers.findIndex((m) => m.id === fromId);
+          if (fromIdx < 0) return n;
           const mods = [...n.modifiers];
-          const [moved] = mods.splice(idx, 1);
-          mods.splice(newIdx, 0, moved);
+          const [moved] = mods.splice(fromIdx, 1);
+          const toIdx = mods.findIndex((m) => m.id === toId);
+          if (toIdx < 0) {
+            mods.push(moved);
+          } else {
+            mods.splice(edge === "top" ? toIdx : toIdx + 1, 0, moved);
+          }
           return { ...n, modifiers: mods };
         }),
       }));
@@ -324,10 +339,7 @@ export default function ForgeApp() {
                   onSelect={() => setSelectedNodeId(node.id)}
                   onToggle={() => toggleNode(node.id)}
                   onRemove={() => removeNode(node.id)}
-                  onMoveUp={() => moveNode(node.id, -1)}
-                  onMoveDown={() => moveNode(node.id, 1)}
-                  canMoveUp={idx > 0}
-                  canMoveDown={idx < doc.nodes.length - 1}
+                  onReorder={reorderNode}
                 />
               ))
             )}
@@ -366,7 +378,9 @@ export default function ForgeApp() {
               onAddModifier={(k) => addModifier(selectedNode.id, k)}
               onRemoveModifier={(mid) => removeModifier(selectedNode.id, mid)}
               onToggleModifier={(mid) => toggleModifier(selectedNode.id, mid)}
-              onMoveModifier={(mid, dir) => moveModifier(selectedNode.id, mid, dir)}
+              onReorderModifier={(fromId, toId, edge) =>
+                reorderModifier(selectedNode.id, fromId, toId, edge)
+              }
               onPatchModifierParams={(mid, patch) =>
                 patchModifierParams(selectedNode.id, mid, patch)
               }
@@ -523,6 +537,9 @@ function DocSection({ doc, onPatch }: { doc: Doc; onPatch: (p: Partial<Doc>) => 
   );
 }
 
+const NODE_DRAG_TYPE = "forge-node";
+const MODIFIER_DRAG_TYPE = "forge-modifier";
+
 function NodeRow({
   node,
   index,
@@ -530,10 +547,7 @@ function NodeRow({
   onSelect,
   onToggle,
   onRemove,
-  onMoveUp,
-  onMoveDown,
-  canMoveUp,
-  canMoveDown,
+  onReorder,
 }: {
   node: Node;
   index: number;
@@ -541,23 +555,84 @@ function NodeRow({
   onSelect: () => void;
   onToggle: () => void;
   onRemove: () => void;
-  onMoveUp: () => void;
-  onMoveDown: () => void;
-  canMoveUp: boolean;
-  canMoveDown: boolean;
+  onReorder: (fromId: number, toId: number, edge: Edge) => void;
 }) {
+  const rowRef = useRef<HTMLDivElement>(null);
+  const gripRef = useRef<HTMLSpanElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const [closestEdge, setClosestEdge] = useState<Edge | null>(null);
+
+  useEffect(() => {
+    const el = rowRef.current;
+    const grip = gripRef.current;
+    if (!el || !grip) return;
+    return combine(
+      draggable({
+        element: el,
+        dragHandle: grip,
+        getInitialData: () => ({ type: NODE_DRAG_TYPE, id: node.id }),
+        onDragStart: () => setDragging(true),
+        onDrop: () => setDragging(false),
+      }),
+      dropTargetForElements({
+        element: el,
+        canDrop: ({ source }) =>
+          source.data.type === NODE_DRAG_TYPE && source.data.id !== node.id,
+        getData: ({ input, element }) =>
+          attachClosestEdge(
+            { type: NODE_DRAG_TYPE, id: node.id },
+            { input, element, allowedEdges: ["top", "bottom"] },
+          ),
+        getIsSticky: () => true,
+        onDrag: ({ self, source }) => {
+          if (source.data.id === node.id) {
+            setClosestEdge(null);
+            return;
+          }
+          setClosestEdge(extractClosestEdge(self.data));
+        },
+        onDragLeave: () => setClosestEdge(null),
+        onDrop: ({ self, source }) => {
+          setClosestEdge(null);
+          const edge = extractClosestEdge(self.data);
+          if (!edge) return;
+          const fromId = source.data.id;
+          if (typeof fromId === "number" && fromId !== node.id) {
+            onReorder(fromId, node.id, edge);
+          }
+        },
+      }),
+    );
+  }, [node.id, onReorder]);
+
   return (
     <div
+      ref={rowRef}
       className={cn(
-        "relative flex cursor-pointer items-center gap-2 border bg-background px-2.5 py-2 transition-colors",
+        "relative flex cursor-pointer items-center gap-2 border bg-background px-2 py-2 transition-colors",
         selected ? "border-foreground" : "border-border hover:border-foreground/40",
         !node.enabled && "opacity-50",
+        dragging && "opacity-40",
       )}
       onClick={(e) => {
-        if ((e.target as HTMLElement).closest("[data-node-action]")) return;
+        if (
+          (e.target as HTMLElement).closest("[data-node-action]") ||
+          (e.target as HTMLElement).closest("[data-node-grip]")
+        )
+          return;
         onSelect();
       }}
     >
+      {closestEdge === "top" && <DropIndicator position="top" />}
+      {closestEdge === "bottom" && <DropIndicator position="bottom" />}
+      <span
+        ref={gripRef}
+        data-node-grip
+        className="text-muted-foreground flex shrink-0 cursor-grab opacity-40 hover:opacity-100 active:cursor-grabbing"
+        title="drag to reorder"
+      >
+        <IconGripDotsVertical className="size-3.5" />
+      </span>
       <span className="w-5 shrink-0 text-sm text-muted-foreground tabular-nums">
         {String(index + 1).padStart(2, "0")}
       </span>
@@ -567,28 +642,6 @@ function NodeRow({
         </span>
         <span className="block truncate text-sm">{node.name}</span>
       </span>
-      <div className="flex shrink-0 flex-col">
-        <button
-          type="button"
-          data-node-action
-          disabled={!canMoveUp}
-          onClick={onMoveUp}
-          title="move up"
-          className="flex h-3 w-4 items-center justify-center text-muted-foreground disabled:opacity-20 hover:text-foreground"
-        >
-          ▲
-        </button>
-        <button
-          type="button"
-          data-node-action
-          disabled={!canMoveDown}
-          onClick={onMoveDown}
-          title="move down"
-          className="flex h-3 w-4 items-center justify-center text-muted-foreground disabled:opacity-20 hover:text-foreground"
-        >
-          ▼
-        </button>
-      </div>
       <button
         type="button"
         data-node-action
@@ -614,6 +667,17 @@ function NodeRow({
   );
 }
 
+function DropIndicator({ position }: { position: "top" | "bottom" }) {
+  const style: CSSProperties = position === "top" ? { top: -1 } : { bottom: -1 };
+  return (
+    <div
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-x-0 z-10 h-0.5 bg-destructive"
+      style={style}
+    />
+  );
+}
+
 function PropertiesPanel({
   node,
   onPatchNode,
@@ -621,7 +685,7 @@ function PropertiesPanel({
   onAddModifier,
   onRemoveModifier,
   onToggleModifier,
-  onMoveModifier,
+  onReorderModifier,
   onPatchModifierParams,
 }: {
   node: Node;
@@ -630,7 +694,7 @@ function PropertiesPanel({
   onAddModifier: (k: ModifierKind) => void;
   onRemoveModifier: (mid: number) => void;
   onToggleModifier: (mid: number) => void;
-  onMoveModifier: (mid: number, dir: -1 | 1) => void;
+  onReorderModifier: (fromId: number, toId: number, edge: Edge) => void;
   onPatchModifierParams: (mid: number, patch: Record<string, unknown>) => void;
 }) {
   return (
@@ -649,17 +713,14 @@ function PropertiesPanel({
               no modifiers
             </div>
           ) : (
-            node.modifiers.map((mod, idx) => (
+            node.modifiers.map((mod) => (
               <ModifierBlock
                 key={mod.id}
                 mod={mod}
                 onRemove={() => onRemoveModifier(mod.id)}
                 onToggle={() => onToggleModifier(mod.id)}
-                onMoveUp={() => onMoveModifier(mod.id, -1)}
-                onMoveDown={() => onMoveModifier(mod.id, 1)}
                 onPatch={(patch) => onPatchModifierParams(mod.id, patch)}
-                canMoveUp={idx > 0}
-                canMoveDown={idx < node.modifiers.length - 1}
+                onReorder={onReorderModifier}
               />
             ))
           )}
@@ -736,30 +797,83 @@ function ModifierBlock({
   mod,
   onRemove,
   onToggle,
-  onMoveUp,
-  onMoveDown,
   onPatch,
-  canMoveUp,
-  canMoveDown,
+  onReorder,
 }: {
   mod: Modifier;
   onRemove: () => void;
   onToggle: () => void;
-  onMoveUp: () => void;
-  onMoveDown: () => void;
   onPatch: (patch: Record<string, unknown>) => void;
-  canMoveUp: boolean;
-  canMoveDown: boolean;
+  onReorder: (fromId: number, toId: number, edge: Edge) => void;
 }) {
   const [open, setOpen] = useState(true);
+  const blockRef = useRef<HTMLDivElement>(null);
+  const gripRef = useRef<HTMLSpanElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const [closestEdge, setClosestEdge] = useState<Edge | null>(null);
+
+  useEffect(() => {
+    const el = blockRef.current;
+    const grip = gripRef.current;
+    if (!el || !grip) return;
+    return combine(
+      draggable({
+        element: el,
+        dragHandle: grip,
+        getInitialData: () => ({ type: MODIFIER_DRAG_TYPE, id: mod.id }),
+        onDragStart: () => setDragging(true),
+        onDrop: () => setDragging(false),
+      }),
+      dropTargetForElements({
+        element: el,
+        canDrop: ({ source }) =>
+          source.data.type === MODIFIER_DRAG_TYPE && source.data.id !== mod.id,
+        getData: ({ input, element }) =>
+          attachClosestEdge(
+            { type: MODIFIER_DRAG_TYPE, id: mod.id },
+            { input, element, allowedEdges: ["top", "bottom"] },
+          ),
+        getIsSticky: () => true,
+        onDrag: ({ self, source }) => {
+          if (source.data.id === mod.id) {
+            setClosestEdge(null);
+            return;
+          }
+          setClosestEdge(extractClosestEdge(self.data));
+        },
+        onDragLeave: () => setClosestEdge(null),
+        onDrop: ({ self, source }) => {
+          setClosestEdge(null);
+          const edge = extractClosestEdge(self.data);
+          if (!edge) return;
+          const fromId = source.data.id;
+          if (typeof fromId === "number" && fromId !== mod.id) {
+            onReorder(fromId, mod.id, edge);
+          }
+        },
+      }),
+    );
+  }, [mod.id, onReorder]);
+
   return (
     <div
+      ref={blockRef}
       className={cn(
-        "border border-border bg-background",
+        "relative border border-border bg-background transition-opacity",
         !mod.enabled && "[&_[data-mod-body]]:opacity-40",
+        dragging && "opacity-40",
       )}
     >
+      {closestEdge === "top" && <DropIndicator position="top" />}
+      {closestEdge === "bottom" && <DropIndicator position="bottom" />}
       <div className="flex items-center gap-1 px-2 py-1.5">
+        <span
+          ref={gripRef}
+          className="text-muted-foreground flex shrink-0 cursor-grab opacity-40 hover:opacity-100 active:cursor-grabbing"
+          title="drag to reorder"
+        >
+          <IconGripDotsVertical className="size-3" />
+        </span>
         <button
           type="button"
           onClick={() => setOpen(!open)}
@@ -774,26 +888,6 @@ function ModifierBlock({
           <span>{MODIFIER_LABELS[mod.kind]}</span>
         </button>
         <div className="flex-1" />
-        <div className="flex flex-col">
-          <button
-            type="button"
-            disabled={!canMoveUp}
-            onClick={onMoveUp}
-            title="move up"
-            className="flex h-3 w-4 items-center justify-center text-muted-foreground disabled:opacity-20 hover:text-foreground"
-          >
-            ▲
-          </button>
-          <button
-            type="button"
-            disabled={!canMoveDown}
-            onClick={onMoveDown}
-            title="move down"
-            className="flex h-3 w-4 items-center justify-center text-muted-foreground disabled:opacity-20 hover:text-foreground"
-          >
-            ▼
-          </button>
-        </div>
         <button
           type="button"
           onClick={onToggle}

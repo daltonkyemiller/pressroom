@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint .",
     "format": "oxfmt .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy": "fly deploy --build-secret NUCLEO_LICENSE_KEY=$NUCLEO_LICENSE_KEY"
   },
   "dependencies": {
     "@atlaskit/pragmatic-drag-and-drop": "^1.8.1",

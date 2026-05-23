@@ -14,6 +14,9 @@ import {
   PROGRESSIVE_BLUR_DEFAULTS,
   type ProgressiveBlurParams,
 } from "./progressive-blur";
+import { isGpuAvailable, runGpuChain, type GpuChainItem, type GpuEffect } from "./gpu/runner";
+import { colorGpu } from "./gpu/effects/color";
+import { curvesGpu } from "./gpu/effects/curves";
 
 export type EffectKind =
   | "blur"
@@ -142,12 +145,39 @@ export const EFFECT_DESCRIPTIONS: Record<EffectKind, string> = {
   duotone: "shader · capsule grid",
 };
 
+// ---------- DITHER KERNELS (flat) ----------
+type FlatKernel = { dx: Int8Array; dy: Int8Array; factor: Float32Array };
+const FLAT_KERNEL_CACHE = new Map<string, FlatKernel>();
+function getFlatKernel(name: string): FlatKernel {
+  const cached = FLAT_KERNEL_CACHE.get(name);
+  if (cached) return cached;
+  const k = KERNELS[name];
+  const n = k.weights.length;
+  const dx = new Int8Array(n);
+  const dy = new Int8Array(n);
+  const factor = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    dx[i] = k.weights[i][0];
+    dy[i] = k.weights[i][1];
+    factor[i] = k.weights[i][2] / k.denom;
+  }
+  const flat: FlatKernel = { dx, dy, factor };
+  FLAT_KERNEL_CACHE.set(name, flat);
+  return flat;
+}
+
 // ---------- BLUR ----------
-export function boxBlur(data: Uint8ClampedArray, w: number, h: number, r: number) {
+export function boxBlur(
+  data: Uint8ClampedArray,
+  w: number,
+  h: number,
+  r: number,
+  channels: 3 | 4 = 3,
+) {
   if (r < 1) return;
   const tmp = new Uint8ClampedArray(data.length);
   for (let y = 0; y < h; y++) {
-    for (let c = 0; c < 3; c++) {
+    for (let c = 0; c < channels; c++) {
       let sum = 0;
       for (let i = -r; i <= r; i++) {
         const xi = Math.max(0, Math.min(w - 1, i));
@@ -239,9 +269,7 @@ function applyHalftone(img: ImageData, p: HalftoneParams): ImageData {
     }
   }
 
-  const shapes = document.createElement("canvas");
-  shapes.width = w;
-  shapes.height = h;
+  const shapes = new OffscreenCanvas(w, h);
   const sctx = shapes.getContext("2d")!;
   if (!p.preserveColors) {
     sctx.fillStyle = `rgb(${darkest[0]},${darkest[1]},${darkest[2]})`;
@@ -309,34 +337,28 @@ function applyHalftone(img: ImageData, p: HalftoneParams): ImageData {
     }
   }
 
-  let inkLayer: HTMLCanvasElement = shapes;
+  let inkLayer: OffscreenCanvas = shapes;
   if (p.goo > 0) {
+    // Replaces the old SVG goo (gaussian blur + alpha threshold matrix). Three
+    // box passes approximate gaussian; alpha is then snapped via the same
+    // linear ramp the SVG matrix used (a' = 20a - 9 in 0..1 space).
     const blurAmount = (p.goo / 30) * (size * 0.6);
-    const svgBlur = document.getElementById("goo-blur");
-    const svgMatrix = document.getElementById("goo-matrix");
-    if (svgBlur && svgMatrix) {
-      svgBlur.setAttribute("stdDeviation", String(blurAmount));
-      svgMatrix.setAttribute(
-        "values",
-        `1 0 0 0 0
-         0 1 0 0 0
-         0 0 1 0 0
-         0 0 0 20 -9`,
-      );
+    const r = Math.max(1, Math.round(blurAmount));
+    const gImg = sctx.getImageData(0, 0, w, h);
+    const gd = gImg.data;
+    boxBlur(gd, w, h, r, 4);
+    boxBlur(gd, w, h, r, 4);
+    boxBlur(gd, w, h, r, 4);
+    for (let i = 3; i < gd.length; i += 4) {
+      const t = 20 * gd[i] - 9 * 255;
+      gd[i] = t < 0 ? 0 : t > 255 ? 255 : t;
     }
-    const gooed = document.createElement("canvas");
-    gooed.width = w;
-    gooed.height = h;
-    const gctx = gooed.getContext("2d")!;
-    gctx.filter = "url(#goo-filter)";
-    gctx.drawImage(shapes, 0, 0);
-    gctx.filter = "none";
+    const gooed = new OffscreenCanvas(w, h);
+    gooed.getContext("2d")!.putImageData(gImg, 0, 0);
     inkLayer = gooed;
   }
 
-  const out = document.createElement("canvas");
-  out.width = w;
-  out.height = h;
+  const out = new OffscreenCanvas(w, h);
   const octx = out.getContext("2d")!;
   if (p.preserveColors) {
     octx.fillStyle = "rgb(255,255,255)";
@@ -401,7 +423,14 @@ function applyDither(img: ImageData, p: DitherParams): ImageData {
       buf[j + 1] = data[i + 1];
       buf[j + 2] = data[i + 2];
     }
-    const kernel = KERNELS[algo];
+    // Flat typed-array kernel — avoids the per-pixel `for-of` over a 2-D
+    // array (which V8 doesn't always inline) and bakes weight/denom into a
+    // single Float32 factor.
+    const flat = getFlatKernel(algo);
+    const kdx = flat.dx;
+    const kdy = flat.dy;
+    const kf = flat.factor;
+    const kn = kdx.length;
     const serp = p.serpentine;
     const diffMul = p.diffusion / 100;
     for (let y = 0; y < h; y++) {
@@ -422,12 +451,14 @@ function applyDither(img: ImageData, p: DitherParams): ImageData {
         const er = (r - nr) * diffMul;
         const eg = (g - ng) * diffMul;
         const eb = (b - nb) * diffMul;
-        for (const [dx, dy, wgt] of kernel.weights) {
+        for (let k = 0; k < kn; k++) {
+          const dx = kdx[k];
+          const dy = kdy[k];
           const ax = reverse ? x - dx : x + dx;
           const ay = y + dy;
           if (ax < 0 || ax >= w || ay >= h) continue;
           const aidx = (ay * w + ax) * 3;
-          const f = wgt / kernel.denom;
+          const f = kf[k];
           buf[aidx] += er * f;
           buf[aidx + 1] += eg * f;
           buf[aidx + 2] += eb * f;
@@ -545,6 +576,41 @@ export function applyLayer(img: ImageData, layer: Layer): ImageData {
     case "duotone":
       return applyDuotoneShader(img, layer.params);
   }
+}
+
+// ---------- GPU dispatch ----------
+// Effects with a GPU implementation. Adjacent GPU layers are batched into a
+// single ping-pong run so the source is uploaded once and read back once.
+// CPU layers (dither error-diffusion, halftone, etc.) interleave naturally —
+// the batch is flushed whenever a CPU layer is encountered.
+const GPU_EFFECTS: { [K in EffectKind]?: GpuEffect<ParamsByKind[K]> } = {
+  color: colorGpu,
+  curves: curvesGpu,
+};
+
+export function runStack(img: ImageData, layers: readonly Layer[]): ImageData {
+  const gpuOk = isGpuAvailable();
+  let current = img;
+  let batch: GpuChainItem[] = [];
+  const flush = () => {
+    if (batch.length === 0) return;
+    current = runGpuChain(current, batch);
+    batch = [];
+  };
+  for (const layer of layers) {
+    if (!layer.enabled) continue;
+    const gpu = gpuOk
+      ? (GPU_EFFECTS[layer.kind] as GpuEffect<unknown> | undefined)
+      : undefined;
+    if (gpu) {
+      batch.push({ effect: gpu, params: layer.params });
+    } else {
+      flush();
+      current = applyLayer(current, layer);
+    }
+  }
+  flush();
+  return current;
 }
 
 export function summarizeLayer(layer: Layer): string {

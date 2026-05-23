@@ -40,7 +40,7 @@ function clamp(n: number, lo: number, hi: number) {
   return n < lo ? lo : n > hi ? hi : n;
 }
 
-function buildLUT(controlPoints: CurvePoint[]): Uint8ClampedArray {
+export function buildLUT(controlPoints: CurvePoint[]): Uint8ClampedArray {
   const lut = new Uint8ClampedArray(256);
   const pts = [...controlPoints].sort((a, b) => a.x - b.x);
   const n = pts.length;

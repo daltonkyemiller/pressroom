@@ -15,7 +15,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { GooFilter } from "@/components/dither/goo-filter";
 import { LayerCard } from "@/components/dither/layer-card";
 import {
   EFFECT_DEFAULTS,
@@ -24,7 +23,7 @@ import {
   type EffectKind,
   type Layer,
 } from "@/lib/dither/effects";
-import { computeWorkDims, exportPNG, renderPipeline } from "@/lib/dither/pipeline";
+import { computeWorkDims, exportPNG, renderPipelineAsync } from "@/lib/dither/pipeline";
 import type { Edge } from "@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge";
 
 // Working resolution for both interactive preview and final commit — keeping
@@ -90,7 +89,7 @@ export default function App() {
   const pendingRef = useRef(false);
   // ---------- render ----------
   const render = useCallback(
-    (original = false) => {
+    async (original = false) => {
       const canvas = canvasRef.current;
       if (!canvas || !sourceImage) return;
       const t0 = performance.now();
@@ -106,7 +105,7 @@ export default function App() {
         setStatusDim(`${dims.width} × ${dims.height}`);
         return;
       }
-      const { imgData, width, height } = renderPipeline(sourceImage, layers, MAX_DIM);
+      const { imgData, width, height } = await renderPipelineAsync(sourceImage, layers, MAX_DIM);
       canvas.width = width;
       canvas.height = height;
       canvas.getContext("2d", { willReadFrequently: true })!.putImageData(imgData, 0, 0);
@@ -122,14 +121,23 @@ export default function App() {
     showOriginalRef.current = showOriginal;
   }, [showOriginal]);
 
+  // Coalesces inputs into rAF, and also serializes the async worker
+  // round-trip — if a new request lands while one is in flight, we mark
+  // pending and re-schedule once it returns. Worst case is one stale frame.
+  const inFlightRef = useRef(false);
   const scheduleRender = useCallback(() => {
-    if (rafIdRef.current !== null) {
+    if (rafIdRef.current !== null || inFlightRef.current) {
       pendingRef.current = true;
       return;
     }
-    rafIdRef.current = requestAnimationFrame(() => {
+    rafIdRef.current = requestAnimationFrame(async () => {
       rafIdRef.current = null;
-      render(showOriginalRef.current);
+      inFlightRef.current = true;
+      try {
+        await render(showOriginalRef.current);
+      } finally {
+        inFlightRef.current = false;
+      }
       if (pendingRef.current) {
         pendingRef.current = false;
         scheduleRender();
@@ -410,8 +418,6 @@ export default function App() {
 
   return (
     <div className="relative grid h-full grid-cols-[320px_1fr] font-sans text-sm">
-      <GooFilter />
-
       {stageDragHover && (
         <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-background/70 backdrop-blur-sm">
           <div className="flex flex-col items-center gap-3 border-2 border-dashed border-foreground bg-background px-8 py-6">

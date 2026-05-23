@@ -160,7 +160,7 @@ export const DUOTONE_DEFAULTS: DuotoneParams = {
 };
 
 type Runtime = {
-  canvas: HTMLCanvasElement;
+  canvas: OffscreenCanvas;
   gl: WebGLRenderingContext;
   program: WebGLProgram;
   texture: WebGLTexture;
@@ -186,8 +186,11 @@ function compileShader(gl: WebGLRenderingContext, type: number, source: string):
 
 function getRuntime(): Runtime {
   if (runtime) return runtime;
-  const canvas = document.createElement("canvas");
-  const gl = canvas.getContext("webgl", { premultipliedAlpha: false, preserveDrawingBuffer: true });
+  const canvas = new OffscreenCanvas(1, 1);
+  const gl = canvas.getContext("webgl", {
+    premultipliedAlpha: false,
+    preserveDrawingBuffer: true,
+  }) as WebGLRenderingContext | null;
   if (!gl) throw new Error("WebGL not supported");
   const vs = compileShader(gl, gl.VERTEX_SHADER, VERTEX_SHADER);
   const fs = compileShader(gl, gl.FRAGMENT_SHADER, FRAGMENT_SHADER);

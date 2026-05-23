@@ -6,6 +6,7 @@ import {
   IconImagePlus,
   IconPlus,
 } from "nucleo-pixel";
+import { Link } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -431,9 +432,12 @@ export default function App() {
       <aside className="flex flex-col border-r border-border bg-background overflow-hidden">
         <div className="flex shrink-0 items-baseline justify-between border-b border-border px-5 py-4">
           <h1 className="font-mondwest text-3xl leading-none tracking-tight">pressroom.</h1>
-          <span className="text-xs tracking-widest text-muted-foreground uppercase">
-            v.02 / stack
-          </span>
+          <Link
+            to="/forge"
+            className="text-xs tracking-widest text-muted-foreground uppercase hover:text-foreground transition-colors"
+          >
+            forge →
+          </Link>
         </div>
 
         <div className="flex shrink-0 items-center justify-between px-5 pt-4 pb-2">

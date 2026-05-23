@@ -34,6 +34,7 @@ import type { Edge } from "@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge
 const MAX_DIM = 900;
 const EFFECT_KINDS: EffectKind[] = [
   "blur",
+  "progressiveBlur",
   "color",
   "curves",
   "halftone",

@@ -9,9 +9,15 @@ import {
   type CurveChannel,
   type CurvesParams,
 } from "./curves";
+import {
+  applyProgressiveBlur,
+  PROGRESSIVE_BLUR_DEFAULTS,
+  type ProgressiveBlurParams,
+} from "./progressive-blur";
 
 export type EffectKind =
   | "blur"
+  | "progressiveBlur"
   | "color"
   | "curves"
   | "halftone"
@@ -58,6 +64,7 @@ export type NoiseParams = { amount: number };
 
 export type ParamsByKind = {
   blur: BlurParams;
+  progressiveBlur: ProgressiveBlurParams;
   color: ColorParams;
   curves: CurvesParams;
   halftone: HalftoneParams;
@@ -80,6 +87,7 @@ export type Layer = {
 
 export const EFFECT_DEFAULTS: { [K in EffectKind]: ParamsByKind[K] } = {
   blur: { radius: 2 },
+  progressiveBlur: PROGRESSIVE_BLUR_DEFAULTS,
   color: { contrast: 0, brightness: 0, gamma: 1, saturation: 100 },
   curves: CURVES_DEFAULTS,
   halftone: {
@@ -110,6 +118,7 @@ export const EFFECT_DEFAULTS: { [K in EffectKind]: ParamsByKind[K] } = {
 
 export const EFFECT_LABELS: Record<EffectKind, string> = {
   blur: "Blur",
+  progressiveBlur: "Progressive blur",
   color: "Color adjust",
   curves: "Curves",
   halftone: "Halftone",
@@ -122,6 +131,7 @@ export const EFFECT_LABELS: Record<EffectKind, string> = {
 
 export const EFFECT_DESCRIPTIONS: Record<EffectKind, string> = {
   blur: "soften input",
+  progressiveBlur: "gradient · radial",
   color: "contrast · gamma",
   curves: "tonal map · per channel",
   halftone: "dot tone",
@@ -133,7 +143,7 @@ export const EFFECT_DESCRIPTIONS: Record<EffectKind, string> = {
 };
 
 // ---------- BLUR ----------
-function boxBlur(data: Uint8ClampedArray, w: number, h: number, r: number) {
+export function boxBlur(data: Uint8ClampedArray, w: number, h: number, r: number) {
   if (r < 1) return;
   const tmp = new Uint8ClampedArray(data.length);
   for (let y = 0; y < h; y++) {
@@ -516,6 +526,8 @@ export function applyLayer(img: ImageData, layer: Layer): ImageData {
   switch (layer.kind) {
     case "blur":
       return applyBlur(img, layer.params);
+    case "progressiveBlur":
+      return applyProgressiveBlur(img, layer.params);
     case "color":
       return applyColor(img, layer.params);
     case "curves":
@@ -539,6 +551,11 @@ export function summarizeLayer(layer: Layer): string {
   switch (layer.kind) {
     case "blur":
       return `radius ${layer.params.radius}`;
+    case "progressiveBlur": {
+      const p = layer.params;
+      const dir = p.direction === "radial" ? "radial" : `${p.angle}°`;
+      return `${dir} · max ${p.maxRadius}px${p.invert ? " · inv" : ""}`;
+    }
     case "color": {
       const p = layer.params;
       return `c${p.contrast} · b${p.brightness} · γ${p.gamma.toFixed(2)}`;

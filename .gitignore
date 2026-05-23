@@ -24,3 +24,6 @@ dist-ssr
 *.sw?
 
 .herenow
+
+# TanStack Router generates this from src/routes/.
+src/routeTree.gen.ts

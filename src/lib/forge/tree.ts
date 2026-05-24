@@ -82,6 +82,23 @@ export function insertIntoGroup(
   });
 }
 
+// True if `candidateId` is the same as `ancestorId` or one of its
+// descendants. Used to prevent dropping a group into itself or one of
+// its own children.
+export function isDescendantOrSelf(
+  nodes: readonly Node[],
+  ancestorId: number,
+  candidateId: number,
+): boolean {
+  if (ancestorId === candidateId) return true;
+  const ancestor = findNode(nodes, ancestorId);
+  if (!ancestor || ancestor.kind !== "group") return false;
+  for (const child of iterNodes(ancestor.children)) {
+    if (child.id === candidateId) return true;
+  }
+  return false;
+}
+
 // Flat depth-first iteration — useful for things like "list all primitive
 // IDs" or "count nodes".
 export function* iterNodes(nodes: readonly Node[]): Generator<Node> {

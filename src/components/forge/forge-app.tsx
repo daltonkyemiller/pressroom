@@ -52,8 +52,10 @@ import { PREFABS, type Prefab } from "@/lib/forge/prefabs";
 import {
   deepCloneWithFreshIds,
   findNode,
+  insertIntoGroup,
   insertSiblingAfter,
   insertSiblingBefore,
+  isDescendantOrSelf,
   mapNode,
   removeNodeById,
 } from "@/lib/forge/tree";
@@ -167,6 +169,10 @@ export default function ForgeApp() {
     (fromId: number, toId: number, edge: Edge) => {
       if (fromId === toId) return;
       setDoc((d) => {
+        // Block dropping a group into one of its own descendants. The other
+        // direction (descendant -> ancestor sibling) is fine because the
+        // moved node is removed first, breaking the cycle naturally.
+        if (isDescendantOrSelf(d.nodes, fromId, toId)) return d;
         const moved = findNode(d.nodes, fromId);
         if (!moved) return d;
         const without = removeNodeById(d.nodes, fromId);
@@ -176,6 +182,25 @@ export default function ForgeApp() {
             : insertSiblingAfter(without, toId, moved);
         if (placed === without) return d;
         return { ...d, nodes: placed };
+      });
+    },
+    [setDoc],
+  );
+
+  // Move a node into a group as its first child. Used by the group drop
+  // zones in the sidebar so users can target empty groups (where there's
+  // no sibling row to drop above/below).
+  const moveIntoGroup = useCallback(
+    (sourceId: number, groupId: number) => {
+      if (sourceId === groupId) return;
+      setDoc((d) => {
+        if (isDescendantOrSelf(d.nodes, sourceId, groupId)) return d;
+        const moved = findNode(d.nodes, sourceId);
+        if (!moved) return d;
+        const target = findNode(d.nodes, groupId);
+        if (!target || target.kind !== "group") return d;
+        const without = removeNodeById(d.nodes, sourceId);
+        return { ...d, nodes: insertIntoGroup(without, groupId, moved) };
       });
     },
     [setDoc],
@@ -562,6 +587,7 @@ export default function ForgeApp() {
                 onDuplicate={duplicateNode}
                 onRemove={removeNode}
                 onReorder={reorderNode}
+                onMoveIntoGroup={moveIntoGroup}
               />
             )}
           </div>
@@ -1012,6 +1038,7 @@ function NodeTree({
   onDuplicate,
   onRemove,
   onReorder,
+  onMoveIntoGroup,
   depth = 0,
 }: {
   nodes: Node[];
@@ -1021,6 +1048,7 @@ function NodeTree({
   onDuplicate: (id: number) => void;
   onRemove: (id: number) => void;
   onReorder: (fromId: number, toId: number, edge: Edge) => void;
+  onMoveIntoGroup: (sourceId: number, groupId: number) => void;
   depth?: number;
 }) {
   return (
@@ -1037,23 +1065,91 @@ function NodeTree({
             onRemove={() => onRemove(node.id)}
             onReorder={onReorder}
           />
-          {node.kind === "group" && node.children.length > 0 && (
-            <div className="mt-1 flex flex-col gap-1">
-              <NodeTree
-                nodes={node.children}
-                selectedNodeId={selectedNodeId}
-                onSelect={onSelect}
-                onToggle={onToggle}
-                onDuplicate={onDuplicate}
-                onRemove={onRemove}
-                onReorder={onReorder}
+          {node.kind === "group" && (
+            <>
+              {node.children.length > 0 && (
+                <div className="mt-1 flex flex-col gap-1">
+                  <NodeTree
+                    nodes={node.children}
+                    selectedNodeId={selectedNodeId}
+                    onSelect={onSelect}
+                    onToggle={onToggle}
+                    onDuplicate={onDuplicate}
+                    onRemove={onRemove}
+                    onReorder={onReorder}
+                    onMoveIntoGroup={onMoveIntoGroup}
+                    depth={depth + 1}
+                  />
+                </div>
+              )}
+              {/* Drop zone for adding to this group. Idle = thin dashed line;
+                  on hover during a valid drag = solid highlight. Critical for
+                  empty groups (no child rows to drop above/below). */}
+              <GroupDropZone
+                groupId={node.id}
                 depth={depth + 1}
+                empty={node.children.length === 0}
+                onDrop={(srcId) => onMoveIntoGroup(srcId, node.id)}
               />
-            </div>
+            </>
           )}
         </div>
       ))}
     </>
+  );
+}
+
+function GroupDropZone({
+  groupId,
+  depth,
+  empty,
+  onDrop,
+}: {
+  groupId: number;
+  depth: number;
+  empty: boolean;
+  onDrop: (sourceId: number) => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [over, setOver] = useState(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    return dropTargetForElements({
+      element: el,
+      canDrop: ({ source }) => source.data.type === NODE_DRAG_TYPE,
+      getData: () => ({ type: NODE_DRAG_TYPE, groupId, intoGroup: true }),
+      onDragEnter: () => setOver(true),
+      onDragLeave: () => setOver(false),
+      onDrop: ({ source }) => {
+        setOver(false);
+        const srcId = source.data.id;
+        if (typeof srcId === "number") onDrop(srcId);
+      },
+    });
+  }, [groupId, onDrop]);
+
+  return (
+    <div
+      ref={ref}
+      style={{ paddingLeft: depth * 14 }}
+      className={cn(
+        "my-1 flex h-5 items-center transition-colors",
+        over ? "" : "opacity-60",
+      )}
+    >
+      <div
+        className={cn(
+          "h-full flex-1 border border-dashed text-[10px] tracking-wider uppercase text-muted-foreground flex items-center justify-center transition-colors",
+          over
+            ? "border-destructive bg-destructive/10 text-foreground"
+            : "border-border/60",
+        )}
+      >
+        {over ? "drop into group" : empty ? "drop here to add" : "·"}
+      </div>
+    </div>
   );
 }
 

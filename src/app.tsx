@@ -122,9 +122,22 @@ export default function App() {
     showOriginalRef.current = showOriginal;
   }, [showOriginal]);
 
+  // Keep a ref to the latest render() closure so rAF callbacks always read
+  // the freshest copy. Without this, the recursive `scheduleRender()` call
+  // inside the rAF would keep using the render closure that existed when
+  // scheduleRender was first defined — so any layer change that arrived
+  // during the rAF + worker round-trip would be ignored, and the rendered
+  // output would always be one step behind the slider.
+  const renderRef = useRef(render);
+  useEffect(() => {
+    renderRef.current = render;
+  }, [render]);
+
   // Coalesces inputs into rAF, and also serializes the async worker
   // round-trip — if a new request lands while one is in flight, we mark
   // pending and re-schedule once it returns. Worst case is one stale frame.
+  // scheduleRender has empty deps so its identity is stable and the
+  // self-reference in the rAF callback always points to itself.
   const inFlightRef = useRef(false);
   const scheduleRender = useCallback(() => {
     if (rafIdRef.current !== null || inFlightRef.current) {
@@ -135,7 +148,7 @@ export default function App() {
       rafIdRef.current = null;
       inFlightRef.current = true;
       try {
-        await render(showOriginalRef.current);
+        await renderRef.current(showOriginalRef.current);
       } finally {
         inFlightRef.current = false;
       }
@@ -144,7 +157,7 @@ export default function App() {
         scheduleRender();
       }
     });
-  }, [render]);
+  }, []);
 
   // ---------- effects: schedule render whenever inputs change ----------
   useEffect(() => {

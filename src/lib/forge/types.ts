@@ -105,6 +105,10 @@ export type ClipParams = {
   h: number;
   invert: boolean;
 };
+export type BooleanParams = {
+  op: "union" | "subtract" | "intersect" | "exclude";
+  targetNodeId: number | null; // when null, the modifier is a no-op
+};
 
 export type Modifier =
   | { id: Id; kind: "linearRepeat"; enabled: boolean; params: LinearRepeatParams }
@@ -113,7 +117,8 @@ export type Modifier =
   | { id: Id; kind: "mirror"; enabled: boolean; params: MirrorParams }
   | { id: Id; kind: "scatter"; enabled: boolean; params: ScatterParams }
   | { id: Id; kind: "colorCycle"; enabled: boolean; params: ColorCycleParams }
-  | { id: Id; kind: "clip"; enabled: boolean; params: ClipParams };
+  | { id: Id; kind: "clip"; enabled: boolean; params: ClipParams }
+  | { id: Id; kind: "boolean"; enabled: boolean; params: BooleanParams };
 
 export type ModifierKind = Modifier["kind"];
 

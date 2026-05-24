@@ -85,8 +85,8 @@ function ClipPathDef({ def }: { def: ClipDef }) {
   );
 }
 
-function NodeContent({ node }: { node: Node }) {
-  const { instances, clipDefs } = expandNode(node);
+function NodeContent({ node, allNodes }: { node: Node; allNodes: Node[] }) {
+  const { instances, clipDefs } = expandNode(node, allNodes);
   return (
     <Fragment>
       {clipDefs.length > 0 && (
@@ -111,7 +111,11 @@ function NodeContent({ node }: { node: Node }) {
             stroke={inst.stroke}
             opacity={inst.opacity}
           >
-            {renderPrimitive(node.primitive, `${node.id}-${i}`)}
+            {inst.pathOverride ? (
+              <path d={inst.pathOverride} />
+            ) : (
+              renderPrimitive(node.primitive, `${node.id}-${i}`)
+            )}
           </g>
         ))}
       </g>
@@ -194,7 +198,7 @@ export function DocSvg({
                 selectedNodeId === node.id ? "1px dashed rgba(255,255,255,0.4)" : undefined,
             }}
           >
-            <NodeContent node={node} />
+            <NodeContent node={node} allNodes={doc.nodes} />
           </g>
         ) : null,
       )}

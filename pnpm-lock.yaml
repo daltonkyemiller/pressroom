@@ -50,6 +50,9 @@ importers:
       nucleo-pixel:
         specifier: ^1.2.0
         version: 1.3.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      paper:
+        specifier: ^0.12.18
+        version: 0.12.18
       react:
         specifier: ^19.2.6
         version: 19.2.6
@@ -2534,6 +2537,10 @@ packages:
 
   package-json-from-dist@1.0.1:
     resolution: {integrity: sha512-UEZIS3/by4OC8vL3P2dTXRETpebLI2NiI5vIrjaD/5UtrkFX/tNbwjTSRAGC/+7CAo2pIcBaRgWmcBBHcsaCIw==}
+
+  paper@0.12.18:
+    resolution: {integrity: sha512-ZSLIEejQTJZuYHhSSqAf4jXOnii0kPhCJGAnYAANtdS72aNwXJ9cP95tZHgq1tnNpvEwgQhggy+4OarviqTCGw==}
+    engines: {node: '>=8.0.0'}
 
   parent-module@1.0.1:
     resolution: {integrity: sha512-GQ2EWRpQV8/o+Aw8YqtfZZPfNRWZYkbidE9k5rpl/hC3vtHHBfGm2Ifi6qWV+coDGkrUKZAxE3Lot5kcsRlh+g==}
@@ -5402,6 +5409,8 @@ snapshots:
       '@oxlint/binding-win32-x64-msvc': 1.66.0
 
   package-json-from-dist@1.0.1: {}
+
+  paper@0.12.18: {}
 
   parent-module@1.0.1:
     dependencies:

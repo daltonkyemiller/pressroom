@@ -425,6 +425,7 @@ export default function ForgeApp() {
             <PropertiesPanel
               node={selectedNode}
               palette={doc.palette}
+              nodes={doc.nodes}
               onPatchNode={(patch) => patchNode(selectedNode.id, patch)}
               onPatchPrimitive={(patch) => patchPrimitiveParams(selectedNode.id, patch)}
               onAddModifier={(k) => addModifier(selectedNode.id, k)}
@@ -760,6 +761,7 @@ function DropIndicator({ position }: { position: "top" | "bottom" }) {
 function PropertiesPanel({
   node,
   palette,
+  nodes,
   onPatchNode,
   onPatchPrimitive,
   onAddModifier,
@@ -771,6 +773,7 @@ function PropertiesPanel({
 }: {
   node: Node;
   palette: string[];
+  nodes: Node[];
   onPatchNode: (patch: Partial<Node>) => void;
   onPatchPrimitive: (patch: Record<string, unknown>) => void;
   onAddModifier: (k: ModifierKind) => void;
@@ -801,6 +804,8 @@ function PropertiesPanel({
                 key={mod.id}
                 mod={mod}
                 palette={palette}
+                nodes={nodes}
+                currentNodeId={node.id}
                 onRemove={() => onRemoveModifier(mod.id)}
                 onToggle={() => onToggleModifier(mod.id)}
                 onDuplicate={() => onDuplicateModifier(mod.id)}
@@ -882,6 +887,8 @@ function PanelSection({
 function ModifierBlock({
   mod,
   palette,
+  nodes,
+  currentNodeId,
   onRemove,
   onToggle,
   onDuplicate,
@@ -890,6 +897,8 @@ function ModifierBlock({
 }: {
   mod: Modifier;
   palette: string[];
+  nodes: Node[];
+  currentNodeId: number;
   onRemove: () => void;
   onToggle: () => void;
   onDuplicate: () => void;
@@ -1008,7 +1017,13 @@ function ModifierBlock({
       </div>
       {open && (
         <div data-mod-body className="border-t border-border/40 px-2.5 py-2">
-          <ModifierControls modifier={mod} palette={palette} onPatch={onPatch} />
+          <ModifierControls
+            modifier={mod}
+            palette={palette}
+            nodes={nodes}
+            currentNodeId={currentNodeId}
+            onPatch={onPatch}
+          />
         </div>
       )}
     </div>

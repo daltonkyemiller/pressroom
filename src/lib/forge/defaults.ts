@@ -38,6 +38,7 @@ export const MODIFIER_LABELS: Record<ModifierKind, string> = {
   scatter: "Scatter",
   colorCycle: "Color cycle",
   clip: "Clip",
+  boolean: "Boolean",
 };
 
 export const PRIMITIVE_KINDS: PrimitiveKind[] = [
@@ -56,6 +57,7 @@ export const MODIFIER_KINDS: ModifierKind[] = [
   "scatter",
   "colorCycle",
   "clip",
+  "boolean",
 ];
 
 const DEFAULT_W = 800;
@@ -237,6 +239,13 @@ export function makeModifier(
           h: 500,
           invert: false,
         } satisfies ClipParams,
+      };
+    case "boolean":
+      return {
+        id,
+        kind,
+        enabled: true,
+        params: { op: "subtract", targetNodeId: null },
       };
   }
 }

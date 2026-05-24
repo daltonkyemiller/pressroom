@@ -4,16 +4,19 @@
 // modifiers). Render then emits one <g> per instance wrapping the base
 // primitive shape.
 
+import { computeBooleanPath, nodeToSvgFragment } from "./boolean";
 import type { BarStackParams, Modifier, Node, PolygonParams, Primitive } from "./types";
 
 export type Instance = {
   transform: string;
   clipPathId?: string;
   // Per-instance style overrides (set by colorCycle and similar modifiers).
-  // Undefined means "inherit from the node's style".
   fill?: string;
   stroke?: string;
   opacity?: number;
+  // When set, this instance renders the supplied SVG path data instead of
+  // the node's primitive. Output of a boolean modifier.
+  pathOverride?: string;
 };
 
 export type ClipDef = {
@@ -148,14 +151,14 @@ function composeTransform(a: string, b: string): string {
   return a ? `${a} ${b}` : b;
 }
 
-export function expandNode(node: Node): Expanded {
+export function expandNode(node: Node, allNodes: readonly Node[] = []): Expanded {
   const pivot = getPrimitiveCenter(node.primitive);
   let instances: Instance[] = [{ transform: "" }];
   const clipDefs: ClipDef[] = [];
 
   for (const mod of node.modifiers) {
     if (!mod.enabled) continue;
-    instances = applyModifier(instances, mod, clipDefs, node.id, pivot);
+    instances = applyModifier(instances, mod, clipDefs, node, allNodes, pivot);
   }
 
   return { instances, clipDefs };
@@ -165,9 +168,11 @@ function applyModifier(
   instances: Instance[],
   mod: Modifier,
   clipDefs: ClipDef[],
-  nodeId: number,
+  node: Node,
+  allNodes: readonly Node[],
   pivot: { x: number; y: number },
 ): Instance[] {
+  const nodeId = node.id;
   switch (mod.kind) {
     case "linearRepeat": {
       const out: Instance[] = [];
@@ -265,5 +270,44 @@ function applyModifier(
       clipDefs.push({ id, ...mod.params });
       return instances.map((inst) => ({ ...inst, clipPathId: id }));
     }
+    case "boolean": {
+      if (mod.params.targetNodeId == null) return instances;
+      const target = allNodes.find((n) => n.id === mod.params.targetNodeId);
+      if (!target || target.id === node.id) return instances;
+      // A = this node's primitive applied through every instance accumulated
+      //     so far in this stack.
+      // B = the target node's full expansion (all of its own modifiers).
+      const targetExpanded = expandNode(target, allNodes);
+      // Strip pathOverride from previous boolean ops in this stack by also
+      // honoring it here when building selfSvg.
+      const selfSvg = buildSvgForInstances(node, instances);
+      const targetSvg = buildSvgForInstances(target, targetExpanded.instances);
+      const d = computeBooleanPath(selfSvg, targetSvg, mod.params.op);
+      if (!d) return instances;
+      // The result is one merged path. Collapse instances to a single
+      // identity-transform instance so subsequent modifiers (repeats,
+      // scatter, etc.) operate on the boolean output.
+      return [{ transform: "", pathOverride: d }];
+    }
   }
+}
+
+// Build an SVG fragment that represents the given instances of a node.
+// Honors pathOverride so chained booleans work.
+function buildSvgForInstances(node: Node, instances: Instance[]): string {
+  // When any instance has a pathOverride, we emit those paths directly,
+  // ignoring the node's primitive. Mixed-mode shouldn't happen in practice
+  // (boolean collapses to one override instance), but be safe.
+  const hasOverride = instances.some((i) => i.pathOverride);
+  if (hasOverride) {
+    const tags = instances
+      .map((inst) => {
+        if (!inst.pathOverride) return "";
+        const t = inst.transform ? ` transform="${inst.transform.trim()}"` : "";
+        return `<g${t}><path d="${inst.pathOverride}" /></g>`;
+      })
+      .join("");
+    return `<svg xmlns="http://www.w3.org/2000/svg">${tags}</svg>`;
+  }
+  return nodeToSvgFragment(node, instances);
 }

@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type {
   BarStackParams,
+  BooleanParams,
   ClipParams,
   ColorCycleParams,
   EllipseParams,
@@ -19,6 +20,7 @@ import type {
   LinearRepeatParams,
   MirrorParams,
   Modifier,
+  Node as ForgeNode,
   PolygonParams,
   Primitive,
   RadialRepeatParams,
@@ -179,10 +181,14 @@ function TextControls({ params, onPatch }: { params: TextParams; onPatch: Patch 
 export function ModifierControls({
   modifier,
   palette,
+  nodes,
+  currentNodeId,
   onPatch,
 }: {
   modifier: Modifier;
   palette: string[];
+  nodes: ForgeNode[];
+  currentNodeId: number;
   onPatch: Patch;
 }) {
   switch (modifier.kind) {
@@ -200,6 +206,15 @@ export function ModifierControls({
       return <ColorCycleControls params={modifier.params} palette={palette} onPatch={onPatch} />;
     case "clip":
       return <ClipControls params={modifier.params} onPatch={onPatch} />;
+    case "boolean":
+      return (
+        <BooleanControls
+          params={modifier.params}
+          nodes={nodes}
+          currentNodeId={currentNodeId}
+          onPatch={onPatch}
+        />
+      );
   }
 }
 
@@ -353,6 +368,59 @@ function ColorCycleControls({
             <IconPlus className="size-3" /> add color
           </button>
         </div>
+      </div>
+    </>
+  );
+}
+
+function BooleanControls({
+  params,
+  nodes,
+  currentNodeId,
+  onPatch,
+}: {
+  params: BooleanParams;
+  nodes: ForgeNode[];
+  currentNodeId: number;
+  onPatch: Patch;
+}) {
+  const targets = nodes.filter((n) => n.id !== currentNodeId);
+  return (
+    <>
+      <SegControl
+        name="op"
+        value={params.op}
+        options={[
+          { value: "union", label: "union" },
+          { value: "subtract", label: "subtract" },
+          { value: "intersect", label: "intersect" },
+          { value: "exclude", label: "exclude" },
+        ]}
+        onChange={(v) => onPatch({ op: v })}
+      />
+      <div className="mb-2">
+        <span className="mb-1.5 block text-xs tracking-wider text-muted-foreground uppercase">
+          target node
+        </span>
+        <select
+          value={params.targetNodeId ?? ""}
+          onChange={(e) =>
+            onPatch({ targetNodeId: e.target.value ? Number(e.target.value) : null })
+          }
+          className="w-full border border-input bg-muted/60 px-2 py-1.5 text-sm outline-none focus:border-ring"
+        >
+          <option value="">— pick a node —</option>
+          {targets.map((n) => (
+            <option key={n.id} value={n.id}>
+              #{n.id} · {n.name}
+            </option>
+          ))}
+        </select>
+        {targets.length === 0 && (
+          <p className="mt-1 text-[11px] italic text-muted-foreground">
+            add a second node to use as the boolean operand
+          </p>
+        )}
       </div>
     </>
   );

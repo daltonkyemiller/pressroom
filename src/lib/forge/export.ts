@@ -74,8 +74,8 @@ function clipDefSvg(def: ClipDef): string {
   return `<clipPath id="${def.id}" clipPathUnits="userSpaceOnUse">${shape}</clipPath>`;
 }
 
-function nodeSvg(node: Node): string {
-  const { instances, clipDefs } = expandNode(node);
+function nodeSvg(node: Node, allNodes: readonly Node[]): string {
+  const { instances, clipDefs } = expandNode(node, allNodes);
   const defs = clipDefs.length > 0 ? `<defs>${clipDefs.map(clipDefSvg).join("")}</defs>` : "";
   const nodeAttrs = `fill="${escapeAttr(node.fill)}" stroke="${escapeAttr(node.stroke)}" stroke-width="${node.strokeWidth}" opacity="${node.opacity}"`;
   const body = instances
@@ -85,7 +85,10 @@ function nodeSvg(node: Node): string {
       const fill = inst.fill ? ` fill="${escapeAttr(inst.fill)}"` : "";
       const stroke = inst.stroke ? ` stroke="${escapeAttr(inst.stroke)}"` : "";
       const op = inst.opacity != null ? ` opacity="${inst.opacity}"` : "";
-      return `<g${t}${cp}${fill}${stroke}${op}>${primitiveSvg(node.primitive)}</g>`;
+      const shape = inst.pathOverride
+        ? `<path d="${inst.pathOverride}" />`
+        : primitiveSvg(node.primitive);
+      return `<g${t}${cp}${fill}${stroke}${op}>${shape}</g>`;
     })
     .join("");
   return `${defs}<g ${nodeAttrs}>${body}</g>`;
@@ -100,7 +103,10 @@ function grainSvg(doc: Doc): string {
 }
 
 export function docToSvgString(doc: Doc): string {
-  const nodes = doc.nodes.filter((n) => n.enabled).map(nodeSvg).join("");
+  const nodes = doc.nodes
+    .filter((n) => n.enabled)
+    .map((n) => nodeSvg(n, doc.nodes))
+    .join("");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${doc.width} ${doc.height}" width="${doc.width}" height="${doc.height}"><rect x="0" y="0" width="${doc.width}" height="${doc.height}" fill="${escapeAttr(doc.background)}" />${nodes}${grainSvg(doc)}</svg>`;
 }

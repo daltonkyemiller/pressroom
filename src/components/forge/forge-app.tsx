@@ -28,7 +28,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ColorControl, SliderControl, ToggleControl } from "@/components/dither/controls";
+import { ColorControl, ToggleControl } from "@/components/dither/controls";
 import { cn } from "@/lib/utils";
 import { DocSvg } from "@/lib/forge/render";
 import { getPrimitiveCenter } from "@/lib/forge/engine";
@@ -55,6 +55,7 @@ import type {
 } from "@/lib/forge/types";
 import {
   GrainControls,
+  LinkedSliders,
   ModifierControls,
   NodeStyleControls,
   PaletteEditor,
@@ -642,21 +643,16 @@ function DocSection({
       <div className="mb-2 text-xs tracking-widest text-muted-foreground uppercase">
         Document
       </div>
-      <SliderControl
-        name="width"
+      <LinkedSliders
+        aName="width"
+        bName="height"
+        aValue={doc.width}
+        bValue={doc.height}
         min={100}
         max={4000}
-        value={doc.width}
         unit="px"
-        onChange={(v) => onPatch({ width: v })}
-      />
-      <SliderControl
-        name="height"
-        min={100}
-        max={4000}
-        value={doc.height}
-        unit="px"
-        onChange={(v) => onPatch({ height: v })}
+        defaultLinked
+        onChange={(width, height) => onPatch({ width, height })}
       />
       <ToggleControl
         name="background"

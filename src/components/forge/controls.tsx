@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { IconPlus, IconXmark } from "nucleo-pixel";
+import { useRef, useState } from "react";
+import { IconLink, IconLinkBroken, IconPlus, IconXmark } from "nucleo-pixel";
 import {
   ColorControl,
   SegControl,
@@ -40,6 +40,109 @@ import type {
 
 type Patch = (patch: Record<string, unknown>) => void;
 
+// ---------- Linked slider pair ----------
+// Two number scrubbers with an optional ratio lock between them. While
+// locked, changing one drags the other along so the a/b ratio is preserved.
+// The lock state is local UI state — not persisted in the doc.
+type LinkedSlidersProps = {
+  aName: string;
+  bName: string;
+  aValue: number;
+  bValue: number;
+  min: number;
+  max: number;
+  step?: number;
+  unit?: string;
+  onChange: (a: number, b: number) => void;
+  defaultLinked?: boolean;
+};
+
+export function LinkedSliders({
+  aName,
+  bName,
+  aValue,
+  bValue,
+  min,
+  max,
+  step,
+  unit,
+  onChange,
+  defaultLinked = false,
+}: LinkedSlidersProps) {
+  const [linked, setLinked] = useState(defaultLinked);
+  // Ratio captured at the moment of linking, so changing either side
+  // doesn't slowly drift due to rounding.
+  const ratioRef = useRef<number>(aValue / Math.max(bValue, 1e-6));
+
+  const setA = (next: number) => {
+    if (!linked) {
+      onChange(next, bValue);
+      return;
+    }
+    const r = ratioRef.current;
+    if (!Number.isFinite(r) || r === 0) {
+      onChange(next, bValue);
+      return;
+    }
+    onChange(next, next / r);
+  };
+  const setB = (next: number) => {
+    if (!linked) {
+      onChange(aValue, next);
+      return;
+    }
+    const r = ratioRef.current;
+    if (!Number.isFinite(r)) {
+      onChange(aValue, next);
+      return;
+    }
+    onChange(next * r, next);
+  };
+  const toggleLink = () => {
+    setLinked((l) => {
+      const nextLinked = !l;
+      if (nextLinked) ratioRef.current = aValue / Math.max(bValue, 1e-6);
+      return nextLinked;
+    });
+  };
+
+  return (
+    <div className="mb-2 grid grid-cols-[1fr_auto] items-center gap-1">
+      <div>
+        <SliderControl
+          name={aName}
+          min={min}
+          max={max}
+          step={step}
+          unit={unit}
+          value={aValue}
+          onChange={setA}
+        />
+        <SliderControl
+          name={bName}
+          min={min}
+          max={max}
+          step={step}
+          unit={unit}
+          value={bValue}
+          onChange={setB}
+        />
+      </div>
+      <button
+        type="button"
+        onClick={toggleLink}
+        title={linked ? "unlink ratio" : "lock ratio"}
+        className={cn(
+          "flex size-6 items-center justify-center border border-border transition-colors",
+          linked ? "bg-foreground text-background" : "hover:bg-muted",
+        )}
+      >
+        {linked ? <IconLink className="size-3" /> : <IconLinkBroken className="size-3" />}
+      </button>
+    </div>
+  );
+}
+
 // ---------- Primitives ----------
 
 export function PrimitiveControls({
@@ -70,8 +173,15 @@ function RectControls({ params, onPatch }: { params: RectParams; onPatch: Patch 
     <>
       <SliderControl name="x" min={-2000} max={2000} value={params.x} onChange={(v) => onPatch({ x: v })} />
       <SliderControl name="y" min={-2000} max={2000} value={params.y} onChange={(v) => onPatch({ y: v })} />
-      <SliderControl name="width" min={0} max={2000} value={params.w} onChange={(v) => onPatch({ w: v })} />
-      <SliderControl name="height" min={0} max={2000} value={params.h} onChange={(v) => onPatch({ h: v })} />
+      <LinkedSliders
+        aName="width"
+        bName="height"
+        aValue={params.w}
+        bValue={params.h}
+        min={0}
+        max={2000}
+        onChange={(w, h) => onPatch({ w, h })}
+      />
       <SliderControl name="corner radius" min={0} max={500} value={params.rx} onChange={(v) => onPatch({ rx: v })} />
     </>
   );
@@ -82,8 +192,16 @@ function EllipseControls({ params, onPatch }: { params: EllipseParams; onPatch: 
     <>
       <SliderControl name="center x" min={-2000} max={2000} value={params.cx} onChange={(v) => onPatch({ cx: v })} />
       <SliderControl name="center y" min={-2000} max={2000} value={params.cy} onChange={(v) => onPatch({ cy: v })} />
-      <SliderControl name="radius x" min={0} max={2000} value={params.rx} onChange={(v) => onPatch({ rx: v })} />
-      <SliderControl name="radius y" min={0} max={2000} value={params.ry} onChange={(v) => onPatch({ ry: v })} />
+      <LinkedSliders
+        aName="radius x"
+        bName="radius y"
+        aValue={params.rx}
+        bValue={params.ry}
+        min={0}
+        max={2000}
+        defaultLinked
+        onChange={(rx, ry) => onPatch({ rx, ry })}
+      />
     </>
   );
 }
@@ -229,8 +347,15 @@ function LinearRepeatControls({ params, onPatch }: { params: LinearRepeatParams;
   return (
     <>
       <SliderControl name="count" min={1} max={60} value={params.count} onChange={(v) => onPatch({ count: v })} />
-      <SliderControl name="step x" min={-500} max={500} value={params.dx} onChange={(v) => onPatch({ dx: v })} />
-      <SliderControl name="step y" min={-500} max={500} value={params.dy} onChange={(v) => onPatch({ dy: v })} />
+      <LinkedSliders
+        aName="step x"
+        bName="step y"
+        aValue={params.dx}
+        bValue={params.dy}
+        min={-500}
+        max={500}
+        onChange={(dx, dy) => onPatch({ dx, dy })}
+      />
       <SliderControl name="rotate / step" min={-180} max={180} value={params.dRotate} unit="°" onChange={(v) => onPatch({ dRotate: v })} />
       <SliderControl name="scale / step" min={-50} max={50} value={params.dScale} unit="%" onChange={(v) => onPatch({ dScale: v })} />
     </>
@@ -251,10 +376,27 @@ function RadialRepeatControls({ params, onPatch }: { params: RadialRepeatParams;
 function GridRepeatControls({ params, onPatch }: { params: GridRepeatParams; onPatch: Patch }) {
   return (
     <>
-      <SliderControl name="count x" min={1} max={30} value={params.countX} onChange={(v) => onPatch({ countX: v })} />
-      <SliderControl name="count y" min={1} max={30} value={params.countY} onChange={(v) => onPatch({ countY: v })} />
-      <SliderControl name="spacing x" min={0} max={500} value={params.dx} onChange={(v) => onPatch({ dx: v })} />
-      <SliderControl name="spacing y" min={0} max={500} value={params.dy} onChange={(v) => onPatch({ dy: v })} />
+      <LinkedSliders
+        aName="count x"
+        bName="count y"
+        aValue={params.countX}
+        bValue={params.countY}
+        min={1}
+        max={30}
+        onChange={(countX, countY) =>
+          onPatch({ countX: Math.round(countX), countY: Math.round(countY) })
+        }
+      />
+      <LinkedSliders
+        aName="spacing x"
+        bName="spacing y"
+        aValue={params.dx}
+        bValue={params.dy}
+        min={0}
+        max={500}
+        defaultLinked
+        onChange={(dx, dy) => onPatch({ dx, dy })}
+      />
       <SliderControl name="row stagger" min={-500} max={500} value={params.staggerY} onChange={(v) => onPatch({ staggerY: v })} />
       <SliderControl name="rotate / cell" min={-180} max={180} value={params.cellRotate} unit="°" onChange={(v) => onPatch({ cellRotate: v })} />
     </>
@@ -287,8 +429,16 @@ function MirrorControls({ params, onPatch }: { params: MirrorParams; onPatch: Pa
 function ScatterControls({ params, onPatch }: { params: ScatterParams; onPatch: Patch }) {
   return (
     <>
-      <SliderControl name="offset x" min={0} max={500} value={params.offsetX} onChange={(v) => onPatch({ offsetX: v })} />
-      <SliderControl name="offset y" min={0} max={500} value={params.offsetY} onChange={(v) => onPatch({ offsetY: v })} />
+      <LinkedSliders
+        aName="offset x"
+        bName="offset y"
+        aValue={params.offsetX}
+        bValue={params.offsetY}
+        min={0}
+        max={500}
+        defaultLinked
+        onChange={(offsetX, offsetY) => onPatch({ offsetX, offsetY })}
+      />
       <SliderControl name="rotation" min={0} max={180} value={params.rotation} unit="°" onChange={(v) => onPatch({ rotation: v })} />
       <SliderControl name="scale" min={0} max={1} step={0.02} value={params.scale} onChange={(v) => onPatch({ scale: v })} />
       <SliderControl name="seed" min={0} max={9999} value={params.seed} onChange={(v) => onPatch({ seed: v })} />
@@ -453,8 +603,16 @@ function ClipControls({ params, onPatch }: { params: ClipParams; onPatch: Patch 
       />
       <SliderControl name="center x" min={-2000} max={2000} value={params.cx} onChange={(v) => onPatch({ cx: v })} />
       <SliderControl name="center y" min={-2000} max={2000} value={params.cy} onChange={(v) => onPatch({ cy: v })} />
-      <SliderControl name="width" min={0} max={4000} value={params.w} onChange={(v) => onPatch({ w: v })} />
-      <SliderControl name="height" min={0} max={4000} value={params.h} onChange={(v) => onPatch({ h: v })} />
+      <LinkedSliders
+        aName="width"
+        bName="height"
+        aValue={params.w}
+        bValue={params.h}
+        min={0}
+        max={4000}
+        defaultLinked
+        onChange={(w, h) => onPatch({ w, h })}
+      />
       <ToggleControl
         name="invert (keep outside)"
         value={params.invert}

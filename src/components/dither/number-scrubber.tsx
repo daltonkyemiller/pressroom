@@ -102,17 +102,6 @@ function NumberScrubber({
     setDraftValue(formatValue(clampedValue));
   }, [draftValue, max, min, onValueChange, value]);
 
-  const updateFromPointer = React.useCallback(
-    (event: React.PointerEvent<HTMLDivElement> | PointerEvent, element: HTMLDivElement) => {
-      const rect = element.getBoundingClientRect();
-      const ratio = clampValue((event.clientX - rect.left) / rect.width, 0, 1);
-      const rawValue = min + ratio * (max - min);
-      const nextValue = snapValue(rawValue, min, max, step, snapPoints);
-      onValueChange(nextValue);
-    },
-    [max, min, onValueChange, snapPoints, step],
-  );
-
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (disabled) return;
 
@@ -135,10 +124,29 @@ function NumberScrubber({
     element.setPointerCapture(event.pointerId);
     document.body.classList.add("dragging");
     onInteractStart?.();
-    updateFromPointer(event, element);
+
+    // Initial click jumps to the position you clicked (absolute mapping),
+    // then subsequent moves track the cursor delta. This lets us apply a
+    // speed modifier mid-drag: hold Shift for 0.1× sensitivity (fine
+    // tuning), release to return to normal speed. Toggling shift never
+    // jumps the value since we accumulate.
+    const rect = element.getBoundingClientRect();
+    const range = max - min;
+    const ratio = clampValue((event.clientX - rect.left) / rect.width, 0, 1);
+    let accumulated = min + ratio * range;
+    onValueChange(snapValue(accumulated, min, max, step, snapPoints));
+    let lastX = event.clientX;
 
     const handlePointerMove = (moveEvent: PointerEvent) => {
-      updateFromPointer(moveEvent, element);
+      const speed = moveEvent.shiftKey ? 0.1 : 1;
+      const dx = moveEvent.clientX - lastX;
+      lastX = moveEvent.clientX;
+      accumulated = clampValue(
+        accumulated + (dx / rect.width) * range * speed,
+        min,
+        max,
+      );
+      onValueChange(snapValue(accumulated, min, max, step, snapPoints));
     };
 
     const handlePointerUp = () => {

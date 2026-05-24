@@ -161,8 +161,22 @@ export function getPrimitiveCenter(p: Primitive): { x: number; y: number } {
   }
 }
 
+// `a` is the existing instance transform; `b` is the new transform a
+// modifier wants to add on top of it. In SVG transform-attribute order,
+// leftmost = outermost (applied last when transforming a point), so the
+// new (outer) modifier transform must go on the left of the existing one.
+//
+// Why it matters: when a primitive seeds with `transform = ""` this is
+// invisible — both orderings produce just `b`. But once primitives seed
+// with their own transforms (barStack's per-bar translate+scale, the new
+// model), composing a radial rotation on the RIGHT applied the rotation
+// in source coords first, then the bar's positioning — which spins each
+// bar around the radial center *before* placing it. Putting `b` on the
+// left lets the bar position itself first, then the radial rotation
+// orbits the placed bar around the radial center, which is what every
+// modifier visually means.
 function composeTransform(a: string, b: string): string {
-  return a ? `${a} ${b}` : b;
+  return a ? `${b} ${a}` : b;
 }
 
 // IDs of nodes that are consumed as the target of a boolean modifier with

@@ -537,10 +537,10 @@ export default function ForgeApp() {
                   <DropdownMenuItem
                     key={prefab.id}
                     onClick={() => addPrefab(prefab)}
-                    className="flex items-baseline justify-between"
+                    className="flex flex-col items-start gap-0 py-1.5"
                   >
                     <span className="lowercase">{prefab.name}</span>
-                    <span className="font-mondwest text-sm text-muted-foreground">
+                    <span className="font-mondwest text-sm text-muted-foreground leading-tight">
                       {prefab.description}
                     </span>
                   </DropdownMenuItem>

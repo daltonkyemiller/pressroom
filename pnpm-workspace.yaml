@@ -4,3 +4,5 @@ allowBuilds:
 
 overrides:
   '@tanstack/router-core': 1.171.5
+  tldts: 7.0.30
+  tldts-core: 7.0.30

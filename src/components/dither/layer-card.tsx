@@ -1,5 +1,12 @@
 import { type CSSProperties, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { IconChevronRight, IconEye, IconEyeSlash, IconGripDotsVertical, IconXmark } from "nucleo-pixel";
+import {
+  IconChevronRight,
+  IconCopy,
+  IconEye,
+  IconEyeSlash,
+  IconGripDotsVertical,
+  IconXmark,
+} from "nucleo-pixel";
 import { draggable, dropTargetForElements } from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
 import { combine } from "@atlaskit/pragmatic-drag-and-drop/combine";
 import { setCustomNativeDragPreview } from "@atlaskit/pragmatic-drag-and-drop/element/set-custom-native-drag-preview";
@@ -42,6 +49,7 @@ type LayerCardProps = {
   index: number;
   onPatch: (params: Record<string, unknown>) => void;
   onToggle: () => void;
+  onDuplicate: () => void;
   onRemove: () => void;
   onExpand: () => void;
   onInteractStart: () => void;
@@ -56,6 +64,7 @@ export function LayerCard({
   index,
   onPatch,
   onToggle,
+  onDuplicate,
   onRemove,
   onExpand,
   onInteractStart,
@@ -196,6 +205,15 @@ export function LayerCard({
           )}
         >
           {layer.enabled ? <IconEye className="size-3" /> : <IconEyeSlash className="size-3" />}
+        </button>
+        <button
+          type="button"
+          data-layer-action
+          onClick={onDuplicate}
+          title="duplicate"
+          className="flex size-6 shrink-0 items-center justify-center border border-border hover:border-foreground/60 hover:bg-muted"
+        >
+          <IconCopy className="size-3" />
         </button>
         <button
           type="button"

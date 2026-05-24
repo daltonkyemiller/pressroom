@@ -301,6 +301,23 @@ export default function App() {
     setLayers((ls) => ls.filter((l) => l.id !== id));
   }, []);
 
+  // Insert a deep copy immediately after the source layer. Params get
+  // structuredCloned so the copy doesn't share state with the original.
+  const duplicateLayer = useCallback((id: number) => {
+    setLayers((ls) => {
+      const idx = ls.findIndex((l) => l.id === id);
+      if (idx < 0) return ls;
+      const src = ls[idx];
+      const copy = {
+        ...structuredClone(src),
+        id: nextIdRef.current++,
+      } as Layer;
+      const next = [...ls];
+      next.splice(idx + 1, 0, copy);
+      return next;
+    });
+  }, []);
+
   const toggleLayer = useCallback((id: number) => {
     setLayers((ls) =>
       ls.map((l) => (l.id === id ? ({ ...l, enabled: !l.enabled } as Layer) : l)),
@@ -488,6 +505,7 @@ export default function App() {
                   index={idx}
                   onPatch={(patch) => patchLayer(layer.id, patch)}
                   onToggle={() => toggleLayer(layer.id)}
+                  onDuplicate={() => duplicateLayer(layer.id)}
                   onRemove={() => removeLayer(layer.id)}
                   onExpand={() => expandLayer(layer.id)}
                   onInteractStart={() => {}}

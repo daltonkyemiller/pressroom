@@ -31,6 +31,7 @@ export type EffectKind =
   | "displace"
   | "chromatic"
   | "edgeBleed"
+  | "text"
   | "duotone";
 
 export type BlurParams = { radius: number };
@@ -78,6 +79,35 @@ export type DisplaceParams = {
   // Useful for "subtle bleed at edges" without softening the whole image.
   strength: number;
 };
+export type TextParams = {
+  // Content
+  content: string;
+  font: string; // CSS font-family
+  size: number; // px (in working-resolution space)
+  letterSpacing: number; // px
+  align: "left" | "center" | "right";
+  bold: boolean;
+  italic: boolean;
+  // Transform — placement of the text on the canvas
+  x: number; // anchor x as % of width (-100..200 lets text live off-canvas if wanted)
+  y: number; // anchor y as % of height
+  rotation: number; // deg
+  scale: number; // uniform scale, 0..400
+  // Style
+  color: string;
+  opacity: number; // 0..1 — composite alpha
+  // Bleed pipeline (applied to the rasterized text mask before compositing)
+  blur: number; // px — gaussian-ish softening
+  dilate: number; // px — max-filter on the mask, "ink soaks outward"
+  displace: number; // px — noise-driven warp on the mask
+  displaceScale: number; // px — noise feature size
+  dust: number; // 0..100 — high-frequency mask erosion (specks/scratches)
+  dustScale: number; // px — feature size of the dust pattern
+  threshold: number; // 0..255 — re-binarize the mask after blur/dilate so ink looks saturated
+  thresholdSoftness: number; // 0..1 — how wide the threshold ramp is (0 = hard binary, 1 = full feather)
+  seed: number;
+};
+
 export type EdgeBleedParams = {
   amount: number; // px — how far dark/light spreads into its opposite
   polarity: "spread-dark" | "spread-light"; // spread-dark = dilate dark areas (ink bleeding into paper); spread-light = erode dark (paper eating ink)
@@ -109,6 +139,7 @@ export type ParamsByKind = {
   displace: DisplaceParams;
   chromatic: ChromaticParams;
   edgeBleed: EdgeBleedParams;
+  text: TextParams;
   duotone: DuotoneParams;
 };
 
@@ -163,6 +194,30 @@ export const EFFECT_DEFAULTS: { [K in EffectKind]: ParamsByKind[K] } = {
     seed: 1,
     strength: 100,
   },
+  text: {
+    content: "INK",
+    font: "Mondwest",
+    size: 200,
+    letterSpacing: 0,
+    align: "center",
+    bold: false,
+    italic: false,
+    x: 50,
+    y: 50,
+    rotation: 0,
+    scale: 100,
+    color: "#0a0a0a",
+    opacity: 1,
+    blur: 1.5,
+    dilate: 1,
+    displace: 2,
+    displaceScale: 6,
+    dust: 30,
+    dustScale: 3,
+    threshold: 140,
+    thresholdSoftness: 0.15,
+    seed: 1,
+  },
   duotone: DUOTONE_DEFAULTS,
 };
 
@@ -179,6 +234,7 @@ export const EFFECT_LABELS: Record<EffectKind, string> = {
   displace: "Displace",
   chromatic: "Chromatic shift",
   edgeBleed: "Edge bleed",
+  text: "Text",
   duotone: "Duotone dashes",
 };
 
@@ -195,6 +251,7 @@ export const EFFECT_DESCRIPTIONS: Record<EffectKind, string> = {
   displace: "noise warp · ink bleed",
   chromatic: "rgb shift · print",
   edgeBleed: "ink spread · uneven",
+  text: "typography · bleed",
   duotone: "shader · capsule grid",
 };
 
@@ -896,6 +953,222 @@ function applyEdgeBleed(img: ImageData, p: EdgeBleedParams): ImageData {
   return img;
 }
 
+// ---------- TEXT ----------
+// Rasterize the user's text to an alpha mask in an offscreen canvas, run a
+// bleed pipeline on the mask (blur → dilate → noise displace → dust), then
+// re-binarize via a soft threshold for that "saturated ink" look, and
+// composite the chosen color over the source image with the resulting
+// mask. Runs in the same worker context as everything else — the worker
+// inherits OffscreenCanvas + Canvas2D + the document fonts registered
+// against `self.fonts` (see font-registry.ts on the main thread).
+function rasterizeTextMask(p: TextParams, w: number, h: number): Uint8ClampedArray {
+  const cvs = new OffscreenCanvas(w, h);
+  const ctx = cvs.getContext("2d");
+  if (!ctx) return new Uint8ClampedArray(w * h);
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = "#ffffff";
+  // CSS font shorthand. Quote the family so multi-word names like
+  // "Neue Bit" survive parsing.
+  const style = p.italic ? "italic " : "";
+  const weight = p.bold ? "700 " : "400 ";
+  ctx.font = `${style}${weight}${p.size}px "${p.font.replace(/"/g, "")}", system-ui, sans-serif`;
+  ctx.textAlign = p.align as CanvasTextAlign;
+  ctx.textBaseline = "middle";
+  if ("letterSpacing" in ctx) {
+    (ctx as unknown as { letterSpacing: string }).letterSpacing = `${p.letterSpacing}px`;
+  }
+  const ax = (p.x / 100) * w;
+  const ay = (p.y / 100) * h;
+  ctx.translate(ax, ay);
+  ctx.rotate((p.rotation * Math.PI) / 180);
+  const s = p.scale / 100;
+  ctx.scale(s, s);
+  // Multi-line support: split on newline, vertically center the block.
+  const lines = p.content.split("\n");
+  const lineH = p.size * 1.1;
+  const block = (lines.length - 1) * lineH;
+  for (let i = 0; i < lines.length; i++) {
+    ctx.fillText(lines[i], 0, i * lineH - block / 2);
+  }
+  // Pull the alpha channel out as a single-channel mask — RGB is unused.
+  const rgba = ctx.getImageData(0, 0, w, h).data;
+  const mask = new Uint8ClampedArray(w * h);
+  for (let i = 0, j = 3; i < mask.length; i++, j += 4) mask[i] = rgba[j];
+  return mask;
+}
+
+// Separable box blur for a single-channel (alpha) buffer. Reuses the same
+// running-sum trick as the RGB boxBlur above but on Uint8ClampedArray of
+// shape [w*h]. Three passes approximate a Gaussian closely enough.
+function blurMask(mask: Uint8ClampedArray, w: number, h: number, r: number) {
+  if (r < 1) return;
+  const passes = 3;
+  for (let pass = 0; pass < passes; pass++) {
+    const tmp = new Uint8ClampedArray(mask.length);
+    for (let y = 0; y < h; y++) {
+      let sum = 0;
+      for (let i = -r; i <= r; i++) {
+        const xi = Math.max(0, Math.min(w - 1, i));
+        sum += mask[y * w + xi];
+      }
+      const div = r * 2 + 1;
+      for (let x = 0; x < w; x++) {
+        tmp[y * w + x] = sum / div;
+        const x1 = Math.max(0, x - r);
+        const x2 = Math.min(w - 1, x + r + 1);
+        sum += mask[y * w + x2] - mask[y * w + x1];
+      }
+    }
+    for (let x = 0; x < w; x++) {
+      let sum = 0;
+      for (let i = -r; i <= r; i++) {
+        const yi = Math.max(0, Math.min(h - 1, i));
+        sum += tmp[yi * w + x];
+      }
+      const div = r * 2 + 1;
+      for (let y = 0; y < h; y++) {
+        mask[y * w + x] = sum / div;
+        const y1 = Math.max(0, y - r);
+        const y2 = Math.min(h - 1, y + r + 1);
+        sum += tmp[y2 * w + x] - tmp[y1 * w + x];
+      }
+    }
+  }
+}
+
+// Single-channel separable max-filter (dilation). O(N·R).
+function dilateMask(mask: Uint8ClampedArray, w: number, h: number, r: number) {
+  if (r < 1) return;
+  const tmp = new Uint8ClampedArray(mask.length);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let m = 0;
+      const lo = Math.max(0, x - r);
+      const hi = Math.min(w - 1, x + r);
+      for (let xi = lo; xi <= hi; xi++) {
+        const v = mask[y * w + xi];
+        if (v > m) m = v;
+      }
+      tmp[y * w + x] = m;
+    }
+  }
+  for (let x = 0; x < w; x++) {
+    for (let y = 0; y < h; y++) {
+      let m = 0;
+      const lo = Math.max(0, y - r);
+      const hi = Math.min(h - 1, y + r);
+      for (let yi = lo; yi <= hi; yi++) {
+        const v = tmp[yi * w + x];
+        if (v > m) m = v;
+      }
+      mask[y * w + x] = m;
+    }
+  }
+}
+
+function displaceMask(
+  mask: Uint8ClampedArray,
+  w: number,
+  h: number,
+  amount: number,
+  scale: number,
+  seed: number,
+) {
+  if (amount <= 0) return;
+  const nx = buildNoiseField(w, h, scale, 2, seed, 0);
+  const ny = buildNoiseField(w, h, scale, 2, seed, 1);
+  const src = new Uint8ClampedArray(mask);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      const sx = x + nx[i] * amount;
+      const sy = y + ny[i] * amount;
+      const x0 = Math.max(0, Math.min(w - 1, Math.floor(sx)));
+      const y0 = Math.max(0, Math.min(h - 1, Math.floor(sy)));
+      const x1 = Math.max(0, Math.min(w - 1, x0 + 1));
+      const y1 = Math.max(0, Math.min(h - 1, y0 + 1));
+      const fx = sx - Math.floor(sx);
+      const fy = sy - Math.floor(sy);
+      const a = src[y0 * w + x0];
+      const b = src[y0 * w + x1];
+      const c = src[y1 * w + x0];
+      const d = src[y1 * w + x1];
+      const top = a + (b - a) * fx;
+      const bot = c + (d - c) * fx;
+      mask[i] = top + (bot - top) * fy;
+    }
+  }
+}
+
+// "Dust / scratches": punch holes in the mask in regions where a
+// high-frequency noise field falls below a threshold derived from the
+// `dust` knob. Higher dust = more holes. Smaller dustScale = finer specks.
+function dustMask(
+  mask: Uint8ClampedArray,
+  w: number,
+  h: number,
+  dust: number,
+  scale: number,
+  seed: number,
+) {
+  if (dust <= 0) return;
+  const noise = buildNoiseField(w, h, Math.max(1, scale), 2, seed + 23, 2);
+  // dust 100 → most specks; 0 → none. Map dust to a noise-cutoff in [-1, 1].
+  // At dust=50, cutoff=0 so half the noise field eats holes.
+  const cutoff = (dust / 100) * 2 - 1;
+  for (let i = 0; i < mask.length; i++) {
+    if (noise[i] < cutoff) mask[i] = 0;
+  }
+}
+
+function applyText(img: ImageData, p: TextParams): ImageData {
+  const w = img.width;
+  const h = img.height;
+  const mask = rasterizeTextMask(p, w, h);
+
+  // Bleed pipeline.
+  if (p.blur > 0) blurMask(mask, w, h, Math.round(p.blur));
+  if (p.dilate > 0) dilateMask(mask, w, h, Math.round(p.dilate));
+  if (p.displace > 0) displaceMask(mask, w, h, p.displace, p.displaceScale, p.seed);
+  if (p.dust > 0) dustMask(mask, w, h, p.dust, p.dustScale, p.seed);
+
+  // Re-binarize through a soft threshold so the result reads as ink rather
+  // than a feathered glow. softness=0 → hard step; softness>0 → linear
+  // ramp `softness*255` wide centered on `threshold`.
+  const t = p.threshold;
+  const ramp = Math.max(1, p.thresholdSoftness * 255);
+  const lo = t - ramp / 2;
+  const hi = t + ramp / 2;
+  for (let i = 0; i < mask.length; i++) {
+    const v = mask[i];
+    if (v <= lo) mask[i] = 0;
+    else if (v >= hi) mask[i] = 255;
+    else mask[i] = Math.round(((v - lo) / ramp) * 255);
+  }
+
+  // Composite the ink color over the source using the resulting mask as
+  // alpha (scaled by opacity).
+  const ink = hexToRgb(p.color);
+  const data = img.data;
+  for (let i = 0, j = 0; i < data.length; i += 4, j++) {
+    const m = mask[j];
+    if (m === 0) continue;
+    const a = (m / 255) * p.opacity;
+    data[i] = data[i] + (ink[0] - data[i]) * a;
+    data[i + 1] = data[i + 1] + (ink[1] - data[i + 1]) * a;
+    data[i + 2] = data[i + 2] + (ink[2] - data[i + 2]) * a;
+  }
+  return img;
+}
+
+function hexToRgb(hex: string): [number, number, number] {
+  const clean = hex.replace("#", "");
+  const full = clean.length === 3 ? clean.replace(/(.)/g, "$1$1") : clean;
+  const n = Number.parseInt(full, 16);
+  if (!Number.isFinite(n)) return [0, 0, 0];
+  return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
+}
+
 export function applyLayer(img: ImageData, layer: Layer): ImageData {
   switch (layer.kind) {
     case "blur":
@@ -922,6 +1195,8 @@ export function applyLayer(img: ImageData, layer: Layer): ImageData {
       return applyChromatic(img, layer.params);
     case "edgeBleed":
       return applyEdgeBleed(img, layer.params);
+    case "text":
+      return applyText(img, layer.params);
     case "duotone":
       return applyDuotoneShader(img, layer.params);
   }
@@ -1014,6 +1289,11 @@ export function summarizeLayer(layer: Layer): string {
     case "edgeBleed": {
       const p = layer.params;
       return `${p.amount}px · ${p.polarity === "spread-dark" ? "dark→" : "light→"} · j${p.jitter}`;
+    }
+    case "text": {
+      const p = layer.params;
+      const trimmed = p.content.length > 14 ? `${p.content.slice(0, 14)}…` : p.content;
+      return `"${trimmed}" · ${p.size}px`;
     }
     case "duotone": {
       const p = layer.params;

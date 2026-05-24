@@ -25,6 +25,7 @@ import {
   type Layer,
 } from "@/lib/dither/effects";
 import { computeWorkDims, exportPNG, renderPipelineAsync } from "@/lib/dither/pipeline";
+import { initBuiltInFonts } from "@/lib/dither/font-registry";
 import type { Edge } from "@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge";
 
 // Working resolution for both interactive preview and final commit — keeping
@@ -43,6 +44,7 @@ const EFFECT_KINDS: EffectKind[] = [
   "displace",
   "chromatic",
   "edgeBleed",
+  "text",
   "invert",
   "noise",
   "grain",
@@ -166,6 +168,13 @@ export default function App() {
   useEffect(() => {
     scheduleRender();
   }, [sourceImage, layers, showOriginal, scheduleRender]);
+
+  // Eager-load the built-in fonts so the Text effect can rasterize with
+  // Mondwest / Neue Bit / Geist Pixel out of the box. Subsequent local-
+  // fonts loads (queryLocalFonts) happen on user action via the picker.
+  useEffect(() => {
+    void initBuiltInFonts();
+  }, []);
 
   // ---------- track stage size for fit-to-container display ----------
   useEffect(() => {

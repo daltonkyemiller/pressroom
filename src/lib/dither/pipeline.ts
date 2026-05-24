@@ -1,4 +1,5 @@
 import { runStack, type Layer } from "./effects";
+import { setWorkerFontRegistrar } from "./font-registry";
 
 export type RenderResult = {
   imgData: ImageData;
@@ -47,22 +48,32 @@ export function renderPipeline(
 
 // ---------- Worker-backed async path ----------
 
-type WorkerRequest = {
+type RenderResponse = {
   id: number;
-  buffer: ArrayBufferLike;
-  width: number;
-  height: number;
-  layers: readonly Layer[];
+  ok: boolean;
+  kind: "render";
+  buffer?: ArrayBufferLike;
+  width?: number;
+  height?: number;
+  error?: string;
 };
-type WorkerResponse =
-  | { id: number; ok: true; buffer: ArrayBufferLike; width: number; height: number }
-  | { id: number; ok: false; error: string };
+type FontRegisterResponse = {
+  id: number;
+  ok: boolean;
+  kind: "registerFont";
+  error?: string;
+};
+type WorkerResponse = RenderResponse | FontRegisterResponse;
 
 let worker: Worker | null = null;
 let nextId = 0;
-const pending = new Map<
+const renderPending = new Map<
   number,
   { resolve: (r: RenderResult) => void; reject: (e: Error) => void }
+>();
+const fontPending = new Map<
+  number,
+  { resolve: () => void; reject: (e: Error) => void }
 >();
 
 function getWorker(): Worker {
@@ -70,11 +81,19 @@ function getWorker(): Worker {
   worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
   worker.onmessage = (e: MessageEvent<WorkerResponse>) => {
     const msg = e.data;
-    const p = pending.get(msg.id);
+    if (msg.kind === "registerFont") {
+      const p = fontPending.get(msg.id);
+      if (!p) return;
+      fontPending.delete(msg.id);
+      if (msg.ok) p.resolve();
+      else p.reject(new Error(msg.error || "font register failed"));
+      return;
+    }
+    const p = renderPending.get(msg.id);
     if (!p) return;
-    pending.delete(msg.id);
-    if (!msg.ok) {
-      p.reject(new Error(msg.error));
+    renderPending.delete(msg.id);
+    if (!msg.ok || !msg.buffer || msg.width == null || msg.height == null) {
+      p.reject(new Error(msg.error || "render failed"));
       return;
     }
     p.resolve({
@@ -88,11 +107,23 @@ function getWorker(): Worker {
     });
   };
   worker.onerror = (e) => {
-    // Surface uncaught worker errors to all pending requests, then reset.
     const err = new Error(e.message || "worker error");
-    for (const p of pending.values()) p.reject(err);
-    pending.clear();
+    for (const p of renderPending.values()) p.reject(err);
+    for (const p of fontPending.values()) p.reject(err);
+    renderPending.clear();
+    fontPending.clear();
   };
+  // Plug ourselves into the font registry so it can ship bytes here.
+  setWorkerFontRegistrar((family, bytes) => {
+    const id = nextId++;
+    return new Promise<void>((resolve, reject) => {
+      fontPending.set(id, { resolve, reject });
+      worker!.postMessage(
+        { kind: "registerFont", id, family, bytes },
+        [bytes],
+      );
+    });
+  });
   return worker;
 }
 
@@ -105,9 +136,11 @@ export function renderPipelineAsync(
   const buffer = imgData.data.buffer;
   const id = nextId++;
   return new Promise<RenderResult>((resolve, reject) => {
-    pending.set(id, { resolve, reject });
-    const req: WorkerRequest = { id, buffer, width, height, layers };
-    getWorker().postMessage(req, [buffer]);
+    renderPending.set(id, { resolve, reject });
+    getWorker().postMessage(
+      { kind: "render", id, buffer, width, height, layers },
+      [buffer],
+    );
   });
 }
 

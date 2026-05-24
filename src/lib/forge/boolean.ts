@@ -30,7 +30,7 @@ function primitiveSvgFragment(p: Primitive): string {
     case "rect": {
       const q = p.params;
       const rx = q.rx > 0 ? ` rx="${q.rx}"` : "";
-      return `<rect x="${q.x}" y="${q.y}" width="${q.w}" height="${q.h}"${rx} />`;
+      return `<rect x="${q.cx - q.w / 2}" y="${q.cy - q.h / 2}" width="${q.w}" height="${q.h}"${rx} />`;
     }
     case "ellipse": {
       const q = p.params;

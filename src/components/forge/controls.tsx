@@ -171,8 +171,8 @@ export function PrimitiveControls({
 function RectControls({ params, onPatch }: { params: RectParams; onPatch: Patch }) {
   return (
     <>
-      <SliderControl name="x" min={-2000} max={2000} value={params.x} onChange={(v) => onPatch({ x: v })} />
-      <SliderControl name="y" min={-2000} max={2000} value={params.y} onChange={(v) => onPatch({ y: v })} />
+      <SliderControl name="center x" min={-2000} max={2000} value={params.cx} onChange={(v) => onPatch({ cx: v })} />
+      <SliderControl name="center y" min={-2000} max={2000} value={params.cy} onChange={(v) => onPatch({ cy: v })} />
       <LinkedSliders
         aName="width"
         bName="height"

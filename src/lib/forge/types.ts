@@ -6,7 +6,10 @@
 export type Id = number;
 
 // ---------- Primitives ----------
-export type RectParams = { x: number; y: number; w: number; h: number; rx: number };
+// (cx, cy) is the visual center of the rect. Changing w or h grows the shape
+// symmetrically — so a grid/repeat stacked on top stays put when the rect's
+// size changes, matching the "default symmetric" UX of every other primitive.
+export type RectParams = { cx: number; cy: number; w: number; h: number; rx: number };
 export type EllipseParams = { cx: number; cy: number; rx: number; ry: number };
 export type BarStackParams = {
   cx: number; // visual center x of the stack

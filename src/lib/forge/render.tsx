@@ -20,7 +20,15 @@ function renderPrimitive(primitive: Primitive, nodeKey: string) {
   switch (primitive.kind) {
     case "rect": {
       const p = primitive.params;
-      return <rect x={p.x} y={p.y} width={p.w} height={p.h} rx={p.rx} />;
+      return (
+        <rect
+          x={p.cx - p.w / 2}
+          y={p.cy - p.h / 2}
+          width={p.w}
+          height={p.h}
+          rx={p.rx}
+        />
+      );
     }
     case "ellipse": {
       const p = primitive.params;

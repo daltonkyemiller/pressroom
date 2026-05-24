@@ -31,7 +31,7 @@ function primitiveSvg(primitive: Primitive): string {
     case "rect": {
       const p = primitive.params;
       const rx = p.rx > 0 ? ` rx="${p.rx}"` : "";
-      return `<rect x="${p.x}" y="${p.y}" width="${p.w}" height="${p.h}"${rx} />`;
+      return `<rect x="${p.cx - p.w / 2}" y="${p.cy - p.h / 2}" width="${p.w}" height="${p.h}"${rx} />`;
     }
     case "ellipse": {
       const p = primitive.params;

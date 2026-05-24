@@ -133,7 +133,7 @@ export function wedgePath(p: {
 export function getPrimitiveCenter(p: Primitive): { x: number; y: number } {
   switch (p.kind) {
     case "rect":
-      return { x: p.params.x + p.params.w / 2, y: p.params.y + p.params.h / 2 };
+      return { x: p.params.cx, y: p.params.cy };
     case "ellipse":
       return { x: p.params.cx, y: p.params.cy };
     case "barStack":

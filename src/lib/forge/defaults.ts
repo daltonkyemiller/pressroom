@@ -79,8 +79,8 @@ export function makePrimitive(kind: PrimitiveKind): Primitive {
       return {
         kind: "rect",
         params: {
-          x: CENTER - 80,
-          y: CENTER - 80,
+          cx: CENTER,
+          cy: CENTER,
           w: 160,
           h: 160,
           rx: 0,
@@ -272,8 +272,8 @@ function randomizePrimitive(primitive: Primitive): Primitive {
       return {
         kind: "rect",
         params: {
-          x: CENTER - w / 2 + jitter(0, 240),
-          y: CENTER - h / 2 + jitter(0, 240),
+          cx: jitter(CENTER, 240),
+          cy: jitter(CENTER, 240),
           w,
           h,
           rx: r() < 0.5 ? 0 : r() * 60,

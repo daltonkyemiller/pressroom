@@ -5,6 +5,7 @@ import {
   IconArrowRotateClockwise,
   IconChevronRight,
   IconCopy,
+  IconCrosshairs2,
   IconDice5,
   IconEye,
   IconEyeSlash,
@@ -304,6 +305,43 @@ export default function ForgeApp() {
     }));
   }, [selectedNodeId, setDoc]);
 
+  // Snap the selected node's primitive center — and any centerable modifier
+  // params (radialRepeat / mirror / clip) — to the doc center. One-click
+  // recovery when sliders drift the composition off-center.
+  const centerSelectedNode = useCallback(() => {
+    if (selectedNodeId == null) return;
+    setDoc((d) => {
+      const docCx = d.width / 2;
+      const docCy = d.height / 2;
+      return {
+        ...d,
+        nodes: d.nodes.map((n) => {
+          if (n.id !== selectedNodeId) return n;
+          // Re-anchor the primitive on doc center. Every primitive has a
+          // (cx, cy) pair (rect was converted) so this is uniform.
+          const newPrim = {
+            ...n.primitive,
+            params: { ...n.primitive.params, cx: docCx, cy: docCy },
+          } as Node["primitive"];
+          // For modifiers that hold their own center, also re-anchor.
+          const newMods = n.modifiers.map((m) => {
+            if (m.kind === "radialRepeat" || m.kind === "clip") {
+              return { ...m, params: { ...m.params, cx: docCx, cy: docCy } } as Modifier;
+            }
+            if (m.kind === "mirror") {
+              return {
+                ...m,
+                params: { ...m.params, center: m.params.axis === "x" ? docCy : docCx },
+              } as Modifier;
+            }
+            return m;
+          });
+          return { ...n, primitive: newPrim, modifiers: newMods };
+        }),
+      };
+    });
+  }, [selectedNodeId, setDoc]);
+
   // ---------- keyboard shortcuts ----------
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -476,6 +514,7 @@ export default function ForgeApp() {
               palette={doc.palette}
               nodes={doc.nodes}
               onRandomize={randomizeSelectedNode}
+              onCenter={centerSelectedNode}
               onPatchNode={(patch) => patchNode(selectedNode.id, patch)}
               onPatchPrimitive={(patch) => patchPrimitiveParams(selectedNode.id, patch)}
               onAddModifier={(k) => addModifier(selectedNode.id, k)}
@@ -834,6 +873,7 @@ function PropertiesPanel({
   palette,
   nodes,
   onRandomize,
+  onCenter,
   onPatchNode,
   onPatchPrimitive,
   onAddModifier,
@@ -847,6 +887,7 @@ function PropertiesPanel({
   palette: string[];
   nodes: Node[];
   onRandomize: () => void;
+  onCenter: () => void;
   onPatchNode: (patch: Partial<Node>) => void;
   onPatchPrimitive: (patch: Record<string, unknown>) => void;
   onAddModifier: (k: ModifierKind) => void;
@@ -862,14 +903,24 @@ function PropertiesPanel({
         <span className="text-xs tracking-widest text-muted-foreground uppercase">
           {node.name}
         </span>
-        <button
-          type="button"
-          onClick={onRandomize}
-          title="randomize this node"
-          className="flex items-center gap-1 border border-border px-2 py-1 text-xs tracking-wider uppercase hover:bg-foreground hover:text-background"
-        >
-          <IconDice5 className="size-3" /> randomize
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onCenter}
+            title="center on doc"
+            className="flex items-center gap-1 border border-border px-2 py-1 text-xs tracking-wider uppercase hover:bg-foreground hover:text-background"
+          >
+            <IconCrosshairs2 className="size-3" /> center
+          </button>
+          <button
+            type="button"
+            onClick={onRandomize}
+            title="randomize this node"
+            className="flex items-center gap-1 border border-border px-2 py-1 text-xs tracking-wider uppercase hover:bg-foreground hover:text-background"
+          >
+            <IconDice5 className="size-3" /> randomize
+          </button>
+        </div>
       </div>
       <PanelSection title="Primitive" sub={PRIMITIVE_LABELS[node.primitive.kind]}>
         <PrimitiveControls primitive={node.primitive} onPatch={onPatchPrimitive} />

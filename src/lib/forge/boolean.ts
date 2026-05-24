@@ -45,14 +45,11 @@ function primitiveSvgFragment(p: Primitive): string {
     }
     case "wedge":
     case "polygon":
-      // Handled at the call site by emitting a <path d="..."> directly.
-      return "";
     case "text":
-      // Text booleans require glyph outlines. Looked up in the font
-      // registry (preloaded built-ins + lazy-loaded local fonts). If the
-      // font isn't parseable (e.g. WOFF2 with opentype.js) we silently
-      // skip — display still works, the boolean just can't see geometry.
-      return textPathSvg(p.params);
+      // Handled at the buildNodeSvg call site (wedge/polygon emit a path
+      // d-string directly; text uses textPathSvg to convert glyphs to a
+      // path via opentype.js).
+      return "";
   }
 }
 
@@ -94,8 +91,10 @@ function buildNodeSvg(node: Node, instances: Array<{ transform: string }>): stri
   } else if (node.primitive.kind === "polygon") {
     shape = `<path d="${polygonD(node.primitive.params)}" />`;
   } else if (node.primitive.kind === "text") {
-    // Booleans on raw <text> require font outlines; skip and treat as empty.
-    shape = "";
+    // Convert text to outline path via opentype.js (in textPathSvg).
+    // Returns "" if the font's bytes haven't been parsed yet (e.g. local
+    // font still lazy-loading), and the boolean degrades gracefully.
+    shape = textPathSvg(node.primitive.params);
   } else {
     shape = primitiveSvgFragment(node.primitive);
   }

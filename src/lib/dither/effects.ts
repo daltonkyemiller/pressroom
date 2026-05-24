@@ -28,6 +28,8 @@ export type EffectKind =
   | "invert"
   | "noise"
   | "grain"
+  | "displace"
+  | "chromatic"
   | "duotone";
 
 export type BlurParams = { radius: number };
@@ -64,6 +66,20 @@ export type DitherParams = {
 };
 export type InvertParams = Record<string, never>;
 export type NoiseParams = { amount: number };
+export type DisplaceParams = {
+  amount: number; // max pixel offset
+  scale: number; // 1..200 — noise feature size in px (large = wavy, small = grainy)
+  octaves: number; // 1..4 — number of overlaid noise frequencies for richness
+  seed: number;
+  // 0..100 — interpolates between the original and the displaced output.
+  // Useful for "subtle bleed at edges" without softening the whole image.
+  strength: number;
+};
+export type ChromaticParams = {
+  amount: number; // px shift
+  angle: number; // 0..360 — direction of the R/B split (ignored when radial)
+  mode: "linear" | "radial";
+};
 
 export type ParamsByKind = {
   blur: BlurParams;
@@ -75,6 +91,8 @@ export type ParamsByKind = {
   invert: InvertParams;
   noise: NoiseParams;
   grain: GrainParams;
+  displace: DisplaceParams;
+  chromatic: ChromaticParams;
   duotone: DuotoneParams;
 };
 
@@ -116,6 +134,8 @@ export const EFFECT_DEFAULTS: { [K in EffectKind]: ParamsByKind[K] } = {
   invert: {},
   noise: { amount: 20 },
   grain: GRAIN_DEFAULTS,
+  displace: { amount: 6, scale: 32, octaves: 2, seed: 1, strength: 100 },
+  chromatic: { amount: 3, angle: 0, mode: "linear" },
   duotone: DUOTONE_DEFAULTS,
 };
 
@@ -129,6 +149,8 @@ export const EFFECT_LABELS: Record<EffectKind, string> = {
   invert: "Invert",
   noise: "Noise",
   grain: "Grain",
+  displace: "Displace",
+  chromatic: "Chromatic shift",
   duotone: "Duotone dashes",
 };
 
@@ -142,6 +164,8 @@ export const EFFECT_DESCRIPTIONS: Record<EffectKind, string> = {
   invert: "flip values",
   noise: "uniform grain",
   grain: "film · tonal response",
+  displace: "noise warp · ink bleed",
+  chromatic: "rgb shift · print",
   duotone: "shader · capsule grid",
 };
 
@@ -553,6 +577,159 @@ function applyNoise(img: ImageData, p: NoiseParams): ImageData {
   return img;
 }
 
+// ---------- DISPLACE ----------
+// Builds a band-limited noise field, then for each output pixel samples
+// the source at (x + nx*amount, y + ny*amount) with bilinear filtering.
+// Two independent noise fields (one per axis) give the warp directional
+// freedom. Multiple octaves overlay the field at halving scales for a
+// richer "natural" texture rather than a single smooth wobble.
+function buildNoiseField(
+  w: number,
+  h: number,
+  scale: number,
+  octaves: number,
+  seed: number,
+  channel: number,
+): Float32Array {
+  const out = new Float32Array(w * h);
+  const oct = Math.max(1, Math.min(4, Math.floor(octaves)));
+  let amp = 1;
+  let totalAmp = 0;
+  for (let o = 0; o < oct; o++) {
+    const cellSize = Math.max(1, scale / (1 << o));
+    const gridW = Math.max(2, Math.ceil(w / cellSize) + 2);
+    const gridH = Math.max(2, Math.ceil(h / cellSize) + 2);
+    // Value noise: random per grid cell, bilinearly interpolated.
+    const grid = new Float32Array(gridW * gridH);
+    for (let i = 0; i < grid.length; i++) {
+      const h32 =
+        ((seed + channel * 7919 + o * 104729) * 374761393 ^ (i * 668265263)) >>>
+        0;
+      const n = (Math.imul(h32 ^ (h32 >>> 13), 1274126177) ^
+        (Math.imul(h32, 1) >>> 16)) >>>
+        0;
+      grid[i] = (n / 0xffffffff) * 2 - 1;
+    }
+    for (let y = 0; y < h; y++) {
+      const gy = y / cellSize;
+      const gyi = Math.floor(gy);
+      const fy = gy - gyi;
+      for (let x = 0; x < w; x++) {
+        const gx = x / cellSize;
+        const gxi = Math.floor(gx);
+        const fx = gx - gxi;
+        const i00 = gyi * gridW + gxi;
+        const i10 = i00 + 1;
+        const i01 = i00 + gridW;
+        const i11 = i01 + 1;
+        const v0 = grid[i00] * (1 - fx) + grid[i10] * fx;
+        const v1 = grid[i01] * (1 - fx) + grid[i11] * fx;
+        out[y * w + x] += (v0 * (1 - fy) + v1 * fy) * amp;
+      }
+    }
+    totalAmp += amp;
+    amp *= 0.5;
+  }
+  // Normalize to roughly [-1, 1] regardless of octave count.
+  if (totalAmp > 0) {
+    for (let i = 0; i < out.length; i++) out[i] /= totalAmp;
+  }
+  return out;
+}
+
+function applyDisplace(img: ImageData, p: DisplaceParams): ImageData {
+  if (p.amount <= 0 || p.strength <= 0) return img;
+  const w = img.width;
+  const h = img.height;
+  const src = new Uint8ClampedArray(img.data);
+  const dst = img.data;
+  const nx = buildNoiseField(w, h, p.scale, p.octaves, p.seed, 0);
+  const ny = buildNoiseField(w, h, p.scale, p.octaves, p.seed, 1);
+  const mix = p.strength / 100;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      const sx = x + nx[i] * p.amount;
+      const sy = y + ny[i] * p.amount;
+      // Bilinear sample of src at (sx, sy) — clamp to image edges.
+      const x0 = Math.max(0, Math.min(w - 1, Math.floor(sx)));
+      const y0 = Math.max(0, Math.min(h - 1, Math.floor(sy)));
+      const x1 = Math.max(0, Math.min(w - 1, x0 + 1));
+      const y1 = Math.max(0, Math.min(h - 1, y0 + 1));
+      const fx = sx - Math.floor(sx);
+      const fy = sy - Math.floor(sy);
+      const o = i * 4;
+      for (let c = 0; c < 3; c++) {
+        const a = src[(y0 * w + x0) * 4 + c];
+        const b = src[(y0 * w + x1) * 4 + c];
+        const cc = src[(y1 * w + x0) * 4 + c];
+        const d = src[(y1 * w + x1) * 4 + c];
+        const top = a + (b - a) * fx;
+        const bot = cc + (d - cc) * fx;
+        const v = top + (bot - top) * fy;
+        dst[o + c] = src[o + c] + (v - src[o + c]) * mix;
+      }
+    }
+  }
+  return img;
+}
+
+// ---------- CHROMATIC SHIFT ----------
+// Print-style misregistration: R and B channels offset in opposite
+// directions; G stays put. Linear mode = constant offset across the
+// image; radial mode scales the offset with distance from center (the
+// way a real lens defocuses RGB at the edges).
+function applyChromatic(img: ImageData, p: ChromaticParams): ImageData {
+  if (p.amount <= 0) return img;
+  const w = img.width;
+  const h = img.height;
+  const src = new Uint8ClampedArray(img.data);
+  const dst = img.data;
+  if (p.mode === "linear") {
+    const ang = (p.angle * Math.PI) / 180;
+    const ox = Math.cos(ang) * p.amount;
+    const oy = Math.sin(ang) * p.amount;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const o = (y * w + x) * 4;
+        const rx = Math.max(0, Math.min(w - 1, Math.round(x + ox)));
+        const ry = Math.max(0, Math.min(h - 1, Math.round(y + oy)));
+        const bx = Math.max(0, Math.min(w - 1, Math.round(x - ox)));
+        const by = Math.max(0, Math.min(h - 1, Math.round(y - oy)));
+        dst[o] = src[(ry * w + rx) * 4];
+        dst[o + 1] = src[(y * w + x) * 4 + 1];
+        dst[o + 2] = src[(by * w + bx) * 4 + 2];
+      }
+    }
+  } else {
+    const cx = w / 2;
+    const cy = h / 2;
+    const maxDist = Math.hypot(cx, cy) || 1;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const dx = x - cx;
+        const dy = y - cy;
+        const dist = Math.hypot(dx, dy);
+        // Offset grows with distance; direction is radial outward.
+        const t = (dist / maxDist) * p.amount;
+        const ux = dist > 0 ? dx / dist : 0;
+        const uy = dist > 0 ? dy / dist : 0;
+        const ox = ux * t;
+        const oy = uy * t;
+        const o = (y * w + x) * 4;
+        const rx = Math.max(0, Math.min(w - 1, Math.round(x + ox)));
+        const ry = Math.max(0, Math.min(h - 1, Math.round(y + oy)));
+        const bx = Math.max(0, Math.min(w - 1, Math.round(x - ox)));
+        const by = Math.max(0, Math.min(h - 1, Math.round(y - oy)));
+        dst[o] = src[(ry * w + rx) * 4];
+        dst[o + 1] = src[(y * w + x) * 4 + 1];
+        dst[o + 2] = src[(by * w + bx) * 4 + 2];
+      }
+    }
+  }
+  return img;
+}
+
 export function applyLayer(img: ImageData, layer: Layer): ImageData {
   switch (layer.kind) {
     case "blur":
@@ -573,6 +750,10 @@ export function applyLayer(img: ImageData, layer: Layer): ImageData {
       return applyNoise(img, layer.params);
     case "grain":
       return applyGrain(img, layer.params);
+    case "displace":
+      return applyDisplace(img, layer.params);
+    case "chromatic":
+      return applyChromatic(img, layer.params);
     case "duotone":
       return applyDuotoneShader(img, layer.params);
   }
@@ -653,6 +834,14 @@ export function summarizeLayer(layer: Layer): string {
       const colorTag =
         p.colorAmount > 0 ? ` · ${p.colorAmount === 100 ? "color" : `c${p.colorAmount}`}` : "";
       return `${p.amount} · ${p.size.toFixed(1)}px${colorTag}`;
+    }
+    case "displace": {
+      const p = layer.params;
+      return `${p.amount}px · scale ${p.scale} · oct ${p.octaves}`;
+    }
+    case "chromatic": {
+      const p = layer.params;
+      return `${p.amount}px · ${p.mode === "radial" ? "radial" : `${p.angle}°`}`;
     }
     case "duotone": {
       const p = layer.params;

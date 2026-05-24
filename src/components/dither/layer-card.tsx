@@ -383,7 +383,7 @@ function LayerBody({
         <>
           <SliderControl
             name="cell size"
-            min={3}
+            min={1}
             max={24}
             value={p.size}
             unit="px"

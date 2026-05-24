@@ -2,6 +2,10 @@ allowBuilds:
   msw: false
   nucleo-pixel: true
 
+# Mirrors CI's supply-chain policy so local installs reject packages
+# published in the last 24h before they reach the lockfile.
+minimumReleaseAge: 1440
+
 overrides:
   '@tanstack/router-core': 1.171.5
   tldts: 7.0.30

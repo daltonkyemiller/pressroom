@@ -1,6 +1,5 @@
 import { Fragment } from "react";
 import {
-  barStackBars,
   expandNode,
   getBooleanHiddenIds,
   polygonPath,
@@ -16,7 +15,7 @@ const FONT_FAMILIES: Record<string, string> = {
   sans: "system-ui, sans-serif",
 };
 
-function renderPrimitive(primitive: Primitive, nodeKey: string) {
+function renderPrimitive(primitive: Primitive) {
   switch (primitive.kind) {
     case "rect": {
       const p = primitive.params;
@@ -35,18 +34,18 @@ function renderPrimitive(primitive: Primitive, nodeKey: string) {
       return <ellipse cx={p.cx} cy={p.cy} rx={p.rx} ry={p.ry} />;
     }
     case "barStack": {
+      // Renders one base rect (width × height centered on cx, cy). Each bar
+      // instance (created by barStackInstances in engine.ts) carries the
+      // translate + non-uniform scale to position and size it, so this same
+      // <rect> draws every bar in the stack via its instance transform.
       const p = primitive.params;
-      const bars = barStackBars(p);
       return (
-        <g
-          transform={
-            p.rotation ? `rotate(${p.rotation} ${p.cx} ${p.cy})` : undefined
-          }
-        >
-          {bars.map((b, i) => (
-            <rect key={`${nodeKey}-bar-${i}`} x={b.x} y={b.y} width={b.w} height={b.h} />
-          ))}
-        </g>
+        <rect
+          x={p.cx - p.width / 2}
+          y={p.cy - p.height / 2}
+          width={p.width}
+          height={p.height}
+        />
       );
     }
     case "wedge":
@@ -129,7 +128,7 @@ function NodeContent({ node, allNodes }: { node: Node; allNodes: Node[] }) {
             {inst.pathOverride ? (
               <path d={inst.pathOverride} />
             ) : (
-              renderPrimitive(node.primitive, `${node.id}-${i}`)
+              renderPrimitive(node.primitive)
             )}
           </g>
         ))}

@@ -2,7 +2,6 @@
 // react-dom/server). PNG rasterizes the SVG via a Blob URL onto a canvas.
 
 import {
-  barStackBars,
   expandNode,
   getBooleanHiddenIds,
   polygonPath,
@@ -38,17 +37,10 @@ function primitiveSvg(primitive: Primitive): string {
       return `<ellipse cx="${p.cx}" cy="${p.cy}" rx="${p.rx}" ry="${p.ry}" />`;
     }
     case "barStack": {
+      // One base rect — per-instance transforms (from barStackInstances)
+      // position each bar.
       const p = primitive.params;
-      const bars = barStackBars(p)
-        .map(
-          (b) =>
-            `<rect x="${b.x.toFixed(2)}" y="${b.y.toFixed(2)}" width="${b.w.toFixed(2)}" height="${b.h.toFixed(2)}" />`,
-        )
-        .join("");
-      if (p.rotation) {
-        return `<g transform="rotate(${p.rotation} ${p.cx} ${p.cy})">${bars}</g>`;
-      }
-      return bars;
+      return `<rect x="${p.cx - p.width / 2}" y="${p.cy - p.height / 2}" width="${p.width}" height="${p.height}" />`;
     }
     case "wedge":
       return `<path d="${wedgePath(primitive.params)}" />`;

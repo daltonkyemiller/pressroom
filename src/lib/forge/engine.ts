@@ -47,25 +47,39 @@ export function hashSigned(seed: number, i: number): number {
   return hash(seed, i) * 2 - 1;
 }
 
-export function barStackBars(p: BarStackParams): Array<{ x: number; y: number; w: number; h: number }> {
-  const bars: Array<{ x: number; y: number; w: number; h: number }> = [];
+// Per-bar transforms for a barStack. The primitive renders as ONE base rect
+// (width × height, centered on cx, cy); each instance carries a translate +
+// non-uniform x-scale that positions/sizes a single bar. This makes
+// downstream modifiers (colorCycle, scatter, mirror, ...) see each bar as
+// its own instance instead of treating the stack as a single shape.
+export function barStackInstances(p: BarStackParams): Instance[] {
+  const out: Instance[] = [];
   const n = Math.max(1, Math.floor(p.count));
   const totalH = n * p.height + (n - 1) * p.gap;
   const topY = p.cy - totalH / 2;
   for (let i = 0; i < n; i++) {
     const t = n > 1 ? i / (n - 1) : 0.5;
     const taperFactor = 1 - (Math.abs(p.taper) / 100) * (p.taper > 0 ? t : 1 - t);
-    let w = p.width * taperFactor;
+    let wScale = taperFactor;
     if (p.jitter > 0) {
       const r = hash(p.seed, i);
-      w *= 1 - r * (p.jitter / 100);
+      wScale *= 1 - r * (p.jitter / 100);
     }
-    w = Math.max(0.5, w);
-    const x = p.cx - w / 2;
-    const y = topY + i * (p.height + p.gap);
-    bars.push({ x, y, w, h: p.height });
+    wScale = Math.max(0.001, wScale);
+    // Bar's visual center is (cx, barCenterY). The base rect renders centered
+    // on (cx, cy), so we translate by the y offset and scale x around cx.
+    const barCenterY = topY + i * (p.height + p.gap) + p.height / 2;
+    const dy = barCenterY - p.cy;
+    let transform =
+      `translate(0 ${dy.toFixed(3)}) translate(${p.cx} ${p.cy}) scale(${wScale.toFixed(5)} 1) translate(${-p.cx} ${-p.cy})`;
+    if (p.rotation) {
+      // Apply the stack's overall rotation first (around cx, cy) so the
+      // bars rotate together as a unit.
+      transform = `rotate(${p.rotation} ${p.cx} ${p.cy}) ${transform}`;
+    }
+    out.push({ transform });
   }
-  return bars;
+  return out;
 }
 
 // Build a closed SVG path "d" string for a polygon or star.
@@ -174,7 +188,13 @@ export function getBooleanHiddenIds(nodes: readonly Node[]): Set<number> {
 
 export function expandNode(node: Node, allNodes: readonly Node[] = []): Expanded {
   const pivot = getPrimitiveCenter(node.primitive);
-  let instances: Instance[] = [{ transform: "" }];
+  // Start with the primitive's intrinsic instances. For most primitives
+  // that's a single identity-transform instance; barStack contributes N
+  // pre-positioned/scaled bars so modifiers see each bar individually.
+  let instances: Instance[] =
+    node.primitive.kind === "barStack"
+      ? barStackInstances(node.primitive.params)
+      : [{ transform: "" }];
   const clipDefs: ClipDef[] = [];
 
   for (const mod of node.modifiers) {

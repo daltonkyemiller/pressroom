@@ -37,33 +37,10 @@ function primitiveSvgFragment(p: Primitive): string {
       return `<ellipse cx="${q.cx}" cy="${q.cy}" rx="${q.rx}" ry="${q.ry}" />`;
     }
     case "barStack": {
-      // Build the bar rects inline. Importing engine here would cycle, so
-      // recompute locally — the math is small.
+      // Base rect for the bar shape; per-instance transforms (built in
+      // engine.ts via barStackInstances) position and size each bar.
       const q = p.params;
-      const n = Math.max(1, Math.floor(q.count));
-      const totalH = n * q.height + (n - 1) * q.gap;
-      const topY = q.cy - totalH / 2;
-      let out = "";
-      for (let i = 0; i < n; i++) {
-        const t = n > 1 ? i / (n - 1) : 0.5;
-        const taperFactor = 1 - (Math.abs(q.taper) / 100) * (q.taper > 0 ? t : 1 - t);
-        let w = q.width * taperFactor;
-        if (q.jitter > 0) {
-          // Same deterministic hash as engine.ts
-          let h = ((q.seed * 374761393) ^ (i * 668265263)) >>> 0;
-          h = Math.imul(h ^ (h >>> 13), 1274126177);
-          h ^= h >>> 16;
-          w *= 1 - ((h >>> 0) / 0xffffffff) * (q.jitter / 100);
-        }
-        w = Math.max(0.5, w);
-        const x = q.cx - w / 2;
-        const y = topY + i * (q.height + q.gap);
-        out += `<rect x="${x}" y="${y}" width="${w}" height="${q.height}" />`;
-      }
-      if (q.rotation) {
-        return `<g transform="rotate(${q.rotation} ${q.cx} ${q.cy})">${out}</g>`;
-      }
-      return out;
+      return `<rect x="${q.cx - q.width / 2}" y="${q.cy - q.height / 2}" width="${q.width}" height="${q.height}" />`;
     }
     case "wedge":
     case "polygon":

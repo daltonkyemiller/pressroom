@@ -197,9 +197,16 @@ function flattenToPath(item: paper.Item): paper.PathItem | null {
 function importAndFlatten(svg: string): paper.PathItem | null {
   if (!svg) return null;
   try {
-    const item = paper.project.importSVG(svg, { insert: true });
+    // expandShapes: convert <rect>, <ellipse>, <circle> etc. into Path
+    // instances. Without this paper produces paper.Shape items, which
+    // flattenToPath would skip — and the boolean would silently no-op.
+    const item = paper.project.importSVG(svg, {
+      insert: true,
+      expandShapes: true,
+    });
     return flattenToPath(item);
-  } catch {
+  } catch (err) {
+    console.error("forge boolean: importSVG failed", err);
     return null;
   }
 }

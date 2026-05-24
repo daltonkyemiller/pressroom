@@ -129,7 +129,9 @@ export type Node = {
   enabled: boolean;
   primitive: Primitive;
   fill: string;
+  fillEnabled: boolean; // when false, emits fill="none" while keeping the color memorized
   stroke: string;
+  strokeEnabled: boolean; // when false, emits stroke="none"
   strokeWidth: number;
   opacity: number;
   modifiers: Modifier[];

@@ -195,9 +195,11 @@ function NumberScrubber({
               onInteractEnd?.();
             }}
             onChange={(event) => setDraftValue(event.target.value)}
-            onFocus={() => {
+            onFocus={(event) => {
               setIsEditing(true);
               onInteractStart?.();
+              // Select the whole value so a typed digit replaces it cleanly.
+              event.currentTarget.select();
             }}
             onKeyDown={handleInputKeyDown}
             onPointerDown={(event) => event.stopPropagation()}

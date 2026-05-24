@@ -97,9 +97,9 @@ function NodeContent({ node, allNodes }: { node: Node; allNodes: Node[] }) {
         </defs>
       )}
       <g
-        fill={node.fill}
-        stroke={node.stroke}
-        strokeWidth={node.strokeWidth || undefined}
+        fill={node.fillEnabled ? node.fill : "none"}
+        stroke={node.strokeEnabled ? node.stroke : "none"}
+        strokeWidth={node.strokeEnabled && node.strokeWidth ? node.strokeWidth : undefined}
         opacity={node.opacity}
       >
         {instances.map((inst, i) => (
@@ -184,7 +184,9 @@ export function DocSvg({
       }}
     >
       <rect x={0} y={0} width={doc.width} height={doc.height} fill={doc.background} />
-      {doc.nodes.map((node) =>
+      {/* Reverse: nodes[0] is the top of the sidebar and should paint LAST so
+          it appears in front, matching Figma/Photoshop layer conventions. */}
+      {[...doc.nodes].reverse().map((node) =>
         node.enabled ? (
           <g
             key={node.id}

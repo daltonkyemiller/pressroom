@@ -8,6 +8,14 @@ import {
 } from "@/components/dither/controls";
 import { ColorPicker } from "@/components/dither/color-picker";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import type {
   BarStackParams,
@@ -130,10 +138,9 @@ function TextControls({ params, onPatch }: { params: TextParams; onPatch: Patch 
         <span className="mb-1.5 block text-xs tracking-wider text-muted-foreground uppercase">
           content
         </span>
-        <input
+        <Input
           value={params.content}
           onChange={(e) => onPatch({ content: e.target.value })}
-          className="w-full border border-input bg-muted/60 px-2 py-1.5 text-sm outline-none focus:border-ring"
         />
       </div>
       <SegControl
@@ -402,20 +409,21 @@ function BooleanControls({
         <span className="mb-1.5 block text-xs tracking-wider text-muted-foreground uppercase">
           target node
         </span>
-        <select
-          value={params.targetNodeId ?? ""}
-          onChange={(e) =>
-            onPatch({ targetNodeId: e.target.value ? Number(e.target.value) : null })
-          }
-          className="w-full border border-input bg-muted/60 px-2 py-1.5 text-sm outline-none focus:border-ring"
+        <Select
+          value={params.targetNodeId != null ? String(params.targetNodeId) : ""}
+          onValueChange={(v) => onPatch({ targetNodeId: v ? Number(v) : null })}
         >
-          <option value="">— pick a node —</option>
-          {targets.map((n) => (
-            <option key={n.id} value={n.id}>
-              #{n.id} · {n.name}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="— pick a node —" />
+          </SelectTrigger>
+          <SelectContent>
+            {targets.map((n) => (
+              <SelectItem key={n.id} value={String(n.id)}>
+                #{n.id} · {n.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         {targets.length === 0 && (
           <p className="mt-1 text-[11px] italic text-muted-foreground">
             add a second node to use as the boolean operand
@@ -455,27 +463,59 @@ function ClipControls({ params, onPatch }: { params: ClipParams; onPatch: Patch 
 
 export function NodeStyleControls({
   fill,
+  fillEnabled,
   stroke,
+  strokeEnabled,
   strokeWidth,
   opacity,
   palette,
   onPatch,
 }: {
   fill: string;
+  fillEnabled: boolean;
   stroke: string;
+  strokeEnabled: boolean;
   strokeWidth: number;
   opacity: number;
   palette: string[];
-  onPatch: (patch: { fill?: string; stroke?: string; strokeWidth?: number; opacity?: number }) => void;
+  onPatch: (patch: Partial<{
+    fill: string;
+    fillEnabled: boolean;
+    stroke: string;
+    strokeEnabled: boolean;
+    strokeWidth: number;
+    opacity: number;
+  }>) => void;
 }) {
   return (
     <>
-      <ColorControl name="fill" value={fill} onChange={(v) => onPatch({ fill: v })} />
-      {palette.length > 0 && (
-        <PaletteSwatches palette={palette} onPick={(v) => onPatch({ fill: v })} />
+      <ToggleControl
+        name="fill"
+        value={fillEnabled}
+        onChange={(v) => onPatch({ fillEnabled: v })}
+      />
+      {fillEnabled && (
+        <>
+          <ColorControl name="fill color" value={fill} onChange={(v) => onPatch({ fill: v })} />
+          {palette.length > 0 && (
+            <PaletteSwatches palette={palette} onPick={(v) => onPatch({ fill: v })} />
+          )}
+        </>
       )}
-      <ColorControl name="stroke" value={stroke} onChange={(v) => onPatch({ stroke: v })} />
-      <SliderControl name="stroke width" min={0} max={40} value={strokeWidth} unit="px" onChange={(v) => onPatch({ strokeWidth: v })} />
+      <ToggleControl
+        name="stroke"
+        value={strokeEnabled}
+        onChange={(v) => onPatch({ strokeEnabled: v })}
+      />
+      {strokeEnabled && (
+        <>
+          <ColorControl name="stroke color" value={stroke} onChange={(v) => onPatch({ stroke: v })} />
+          {palette.length > 0 && (
+            <PaletteSwatches palette={palette} onPick={(v) => onPatch({ stroke: v })} />
+          )}
+          <SliderControl name="stroke width" min={0} max={40} value={strokeWidth} unit="px" onChange={(v) => onPatch({ strokeWidth: v })} />
+        </>
+      )}
       <SliderControl name="opacity" min={0} max={1} step={0.05} value={opacity} onChange={(v) => onPatch({ opacity: v })} />
     </>
   );

@@ -77,7 +77,10 @@ function clipDefSvg(def: ClipDef): string {
 function nodeSvg(node: Node, allNodes: readonly Node[]): string {
   const { instances, clipDefs } = expandNode(node, allNodes);
   const defs = clipDefs.length > 0 ? `<defs>${clipDefs.map(clipDefSvg).join("")}</defs>` : "";
-  const nodeAttrs = `fill="${escapeAttr(node.fill)}" stroke="${escapeAttr(node.stroke)}" stroke-width="${node.strokeWidth}" opacity="${node.opacity}"`;
+  const fillVal = node.fillEnabled ? node.fill : "none";
+  const strokeVal = node.strokeEnabled ? node.stroke : "none";
+  const strokeW = node.strokeEnabled ? node.strokeWidth : 0;
+  const nodeAttrs = `fill="${escapeAttr(fillVal)}" stroke="${escapeAttr(strokeVal)}" stroke-width="${strokeW}" opacity="${node.opacity}"`;
   const body = instances
     .map((inst) => {
       const t = inst.transform ? ` transform="${escapeAttr(inst.transform.trim())}"` : "";
@@ -103,7 +106,10 @@ function grainSvg(doc: Doc): string {
 }
 
 export function docToSvgString(doc: Doc): string {
-  const nodes = doc.nodes
+  // Render in reverse so nodes[0] (top of sidebar) is painted last and ends
+  // up visually in front — matches Figma/Photoshop layer ordering.
+  const nodes = [...doc.nodes]
+    .reverse()
     .filter((n) => n.enabled)
     .map((n) => nodeSvg(n, doc.nodes))
     .join("");

@@ -259,6 +259,119 @@ export function nextModId(): number {
   return _modId++;
 }
 
+// Generate randomized primitive params within sensible visual bounds.
+// Used by the "🎲 randomize" button on the property panel for kickstarting
+// a composition.
+function randomizePrimitive(primitive: Primitive): Primitive {
+  const r = Math.random;
+  const jitter = (base: number, spread: number) => base + (r() - 0.5) * spread;
+  switch (primitive.kind) {
+    case "rect": {
+      const w = 50 + r() * 400;
+      const h = 50 + r() * 400;
+      return {
+        kind: "rect",
+        params: {
+          x: CENTER - w / 2 + jitter(0, 240),
+          y: CENTER - h / 2 + jitter(0, 240),
+          w,
+          h,
+          rx: r() < 0.5 ? 0 : r() * 60,
+        },
+      };
+    }
+    case "ellipse": {
+      const rx = 30 + r() * 250;
+      const ry = r() < 0.5 ? rx : 30 + r() * 250;
+      return {
+        kind: "ellipse",
+        params: {
+          cx: jitter(CENTER, 240),
+          cy: jitter(CENTER, 240),
+          rx,
+          ry,
+        },
+      };
+    }
+    case "barStack":
+      return {
+        kind: "barStack",
+        params: {
+          cx: jitter(CENTER, 200),
+          cy: jitter(CENTER, 200),
+          count: 4 + Math.floor(r() * 24),
+          width: 100 + r() * 280,
+          height: 4 + r() * 22,
+          gap: Math.floor(r() * 18),
+          taper: Math.floor(jitter(0, 200)),
+          jitter: r() < 0.5 ? 0 : Math.floor(r() * 80),
+          seed: Math.floor(r() * 9999),
+          rotation: r() < 0.7 ? 0 : Math.floor(r() * 360),
+        },
+      };
+    case "wedge": {
+      const ro = 80 + r() * 220;
+      const ri = r() < 0.5 ? 0 : r() * (ro - 20);
+      return {
+        kind: "wedge",
+        params: {
+          cx: jitter(CENTER, 200),
+          cy: jitter(CENTER, 200),
+          outerRadius: ro,
+          innerRadius: ri,
+          startAngle: Math.floor(-180 + r() * 360),
+          sweep: Math.floor(30 + r() * 270),
+        },
+      };
+    }
+    case "polygon": {
+      const isStar = r() < 0.4;
+      return {
+        kind: "polygon",
+        params: {
+          cx: jitter(CENTER, 200),
+          cy: jitter(CENTER, 200),
+          radius: 60 + r() * 180,
+          sides: 3 + Math.floor(r() * 9),
+          starInner: isStar ? 0.2 + r() * 0.6 : 1,
+          rotation: r() < 0.6 ? 0 : Math.floor(r() * 360),
+        },
+      };
+    }
+    case "text":
+      return {
+        kind: "text",
+        params: {
+          ...primitive.params,
+          cx: jitter(CENTER, 200),
+          cy: jitter(CENTER, 200),
+          size: 60 + r() * 200,
+          rotation: r() < 0.6 ? 0 : Math.floor((r() - 0.5) * 90),
+          letterSpacing: Math.floor((r() - 0.5) * 20),
+        },
+      };
+  }
+}
+
+export function randomizeNode(node: Node, palette: string[]): Node {
+  const r = Math.random;
+  const primitive = randomizePrimitive(node.primitive);
+  const fill =
+    palette.length > 0 ? palette[Math.floor(r() * palette.length)] : node.fill;
+  // Reroll seeds on modifiers that use them so the random output actually
+  // looks different each time.
+  const modifiers = node.modifiers.map((m) => {
+    if (m.kind === "scatter") {
+      return { ...m, params: { ...m.params, seed: Math.floor(r() * 9999) } };
+    }
+    if (m.kind === "colorCycle" && m.params.mode === "random") {
+      return { ...m, params: { ...m.params, seed: Math.floor(r() * 9999) } };
+    }
+    return m;
+  });
+  return { ...node, primitive, fill, modifiers };
+}
+
 export function makeNode(kind: PrimitiveKind, id: number): Node {
   return {
     id,
@@ -266,7 +379,9 @@ export function makeNode(kind: PrimitiveKind, id: number): Node {
     enabled: true,
     primitive: makePrimitive(kind),
     fill: "#d96b29",
+    fillEnabled: true,
     stroke: "#000000",
+    strokeEnabled: false,
     strokeWidth: 0,
     opacity: 1,
     modifiers: [],
@@ -296,7 +411,9 @@ export function makeDefaultDoc(): Doc {
         enabled: true,
         primitive: makePrimitive("barStack"),
         fill: "#d96b29",
+        fillEnabled: true,
         stroke: "#000000",
+        strokeEnabled: false,
         strokeWidth: 0,
         opacity: 1,
         modifiers: [

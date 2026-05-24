@@ -2,8 +2,10 @@ import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState }
 import {
   IconArrowDownToLine,
   IconArrowRotateAnticlockwise,
+  IconArrowRotateClockwise,
   IconChevronRight,
   IconCopy,
+  IconDice5,
   IconEye,
   IconEyeSlash,
   IconGripDotsVertical,
@@ -31,6 +33,7 @@ import { cn } from "@/lib/utils";
 import { DocSvg } from "@/lib/forge/render";
 import { getPrimitiveCenter } from "@/lib/forge/engine";
 import { downloadPng, downloadSvg } from "@/lib/forge/export";
+import { useUndoableDoc } from "@/lib/forge/use-undoable-doc";
 import {
   makeDefaultDoc,
   makeModifier,
@@ -41,6 +44,7 @@ import {
   nextNodeId,
   PRIMITIVE_KINDS,
   PRIMITIVE_LABELS,
+  randomizeNode,
 } from "@/lib/forge/defaults";
 import type {
   Doc,
@@ -65,7 +69,10 @@ function clamp(n: number, lo: number, hi: number) {
 }
 
 export default function ForgeApp() {
-  const [doc, setDoc] = useState<Doc>(() => makeDefaultDoc());
+  const initialDocRef = useRef<Doc | null>(null);
+  if (initialDocRef.current === null) initialDocRef.current = makeDefaultDoc();
+  const { doc, setDoc, undo, redo, replace: replaceDoc, canUndo, canRedo } =
+    useUndoableDoc<Doc>(initialDocRef.current);
   const [selectedNodeId, setSelectedNodeId] = useState<number | null>(
     () => doc.nodes[0]?.id ?? null,
   );
@@ -80,13 +87,17 @@ export default function ForgeApp() {
     setDoc((d) => ({ ...d, ...patch }));
   }, []);
 
-  const addNode = useCallback((kind: PrimitiveKind) => {
-    setDoc((d) => {
-      const node = makeNode(kind, nextNodeId());
-      setSelectedNodeId(node.id);
-      return { ...d, nodes: [...d.nodes, node] };
-    });
-  }, []);
+  const addNode = useCallback(
+    (kind: PrimitiveKind) => {
+      setDoc((d) => {
+        const node = makeNode(kind, nextNodeId());
+        setSelectedNodeId(node.id);
+        // Prepend so new nodes appear at the top of the sidebar = visually in front.
+        return { ...d, nodes: [node, ...d.nodes] };
+      });
+    },
+    [setDoc],
+  );
 
   const removeNode = useCallback(
     (id: number) => {
@@ -96,26 +107,31 @@ export default function ForgeApp() {
     [],
   );
 
-  const duplicateNode = useCallback((id: number) => {
-    setDoc((d) => {
-      const idx = d.nodes.findIndex((n) => n.id === id);
-      if (idx < 0) return d;
-      const src = d.nodes[idx];
-      const copy: Node = {
-        ...structuredClone(src),
-        id: nextNodeId(),
-        name: `${src.name} copy`,
-        modifiers: src.modifiers.map((m) => ({
-          ...structuredClone(m),
-          id: nextModId(),
-        })),
-      };
-      const nodes = [...d.nodes];
-      nodes.splice(idx + 1, 0, copy);
-      setSelectedNodeId(copy.id);
-      return { ...d, nodes };
-    });
-  }, []);
+  const duplicateNode = useCallback(
+    (id: number) => {
+      setDoc((d) => {
+        const idx = d.nodes.findIndex((n) => n.id === id);
+        if (idx < 0) return d;
+        const src = d.nodes[idx];
+        const copy: Node = {
+          ...structuredClone(src),
+          id: nextNodeId(),
+          name: `${src.name} copy`,
+          modifiers: src.modifiers.map((m) => ({
+            ...structuredClone(m),
+            id: nextModId(),
+          })),
+        };
+        const nodes = [...d.nodes];
+        // Insert ABOVE the source so the copy ends up visually in front
+        // (since lower index = top of sidebar = front).
+        nodes.splice(idx, 0, copy);
+        setSelectedNodeId(copy.id);
+        return { ...d, nodes };
+      });
+    },
+    [setDoc],
+  );
 
   const toggleNode = useCallback((id: number) => {
     setDoc((d) => ({
@@ -273,9 +289,41 @@ export default function ForgeApp() {
   const resetDoc = useCallback(() => {
     if (!confirm("Reset to default document?")) return;
     const fresh = makeDefaultDoc();
-    setDoc(fresh);
+    replaceDoc(fresh);
     setSelectedNodeId(fresh.nodes[0]?.id ?? null);
-  }, []);
+  }, [replaceDoc]);
+
+  const randomizeSelectedNode = useCallback(() => {
+    if (selectedNodeId == null) return;
+    setDoc((d) => ({
+      ...d,
+      nodes: d.nodes.map((n) =>
+        n.id === selectedNodeId ? randomizeNode(n, d.palette) : n,
+      ),
+    }));
+  }, [selectedNodeId, setDoc]);
+
+  // ---------- keyboard shortcuts ----------
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const meta = e.metaKey || e.ctrlKey;
+      if (!meta) return;
+      const k = e.key.toLowerCase();
+      // Don't intercept while typing in inputs/textarea
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable))
+        return;
+      if (k === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if ((k === "z" && e.shiftKey) || k === "y") {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [undo, redo]);
 
   // ---------- canvas zoom + pan ----------
   const stageRef = useRef<HTMLDivElement>(null);
@@ -426,6 +474,7 @@ export default function ForgeApp() {
               node={selectedNode}
               palette={doc.palette}
               nodes={doc.nodes}
+              onRandomize={randomizeSelectedNode}
               onPatchNode={(patch) => patchNode(selectedNode.id, patch)}
               onPatchPrimitive={(patch) => patchPrimitiveParams(selectedNode.id, patch)}
               onAddModifier={(k) => addModifier(selectedNode.id, k)}
@@ -544,6 +593,25 @@ export default function ForgeApp() {
               : "—"}
           </span>
           <div className="flex-1" />
+          <button
+            type="button"
+            onClick={undo}
+            disabled={!canUndo}
+            className="flex items-center gap-1 text-foreground hover:opacity-60 disabled:opacity-30"
+            title="undo (⌘Z)"
+          >
+            <IconArrowRotateAnticlockwise className="size-3" /> undo
+          </button>
+          <button
+            type="button"
+            onClick={redo}
+            disabled={!canRedo}
+            className="flex items-center gap-1 text-foreground hover:opacity-60 disabled:opacity-30"
+            title="redo (⌘⇧Z)"
+          >
+            redo <IconArrowRotateClockwise className="size-3" />
+          </button>
+          <span className="opacity-40">/</span>
           <button
             type="button"
             onClick={resetView}
@@ -762,6 +830,7 @@ function PropertiesPanel({
   node,
   palette,
   nodes,
+  onRandomize,
   onPatchNode,
   onPatchPrimitive,
   onAddModifier,
@@ -774,6 +843,7 @@ function PropertiesPanel({
   node: Node;
   palette: string[];
   nodes: Node[];
+  onRandomize: () => void;
   onPatchNode: (patch: Partial<Node>) => void;
   onPatchPrimitive: (patch: Record<string, unknown>) => void;
   onAddModifier: (k: ModifierKind) => void;
@@ -785,6 +855,19 @@ function PropertiesPanel({
 }) {
   return (
     <div className="border-t border-border bg-muted/10">
+      <div className="flex items-center justify-between border-b border-border/40 px-3.5 py-2">
+        <span className="text-xs tracking-widest text-muted-foreground uppercase">
+          {node.name}
+        </span>
+        <button
+          type="button"
+          onClick={onRandomize}
+          title="randomize this node"
+          className="flex items-center gap-1 border border-border px-2 py-1 text-xs tracking-wider uppercase hover:bg-foreground hover:text-background"
+        >
+          <IconDice5 className="size-3" /> randomize
+        </button>
+      </div>
       <PanelSection title="Primitive" sub={PRIMITIVE_LABELS[node.primitive.kind]}>
         <PrimitiveControls primitive={node.primitive} onPatch={onPatchPrimitive} />
       </PanelSection>
@@ -845,7 +928,9 @@ function PropertiesPanel({
       <PanelSection title="Style">
         <NodeStyleControls
           fill={node.fill}
+          fillEnabled={node.fillEnabled}
           stroke={node.stroke}
+          strokeEnabled={node.strokeEnabled}
           strokeWidth={node.strokeWidth}
           opacity={node.opacity}
           palette={palette}

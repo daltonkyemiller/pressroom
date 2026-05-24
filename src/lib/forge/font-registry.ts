@@ -30,7 +30,14 @@ export type FontEntry = {
 const registry = new Map<string, FontEntry>();
 const listeners = new Set<() => void>();
 
+// Cached snapshot for useSyncExternalStore consumers. React requires
+// getSnapshot to return the same reference between notifies, otherwise it
+// thinks state changed every render and loops. We invalidate on notify
+// and rebuild on demand.
+let snapshotCache: FontEntry[] | null = null;
+
 function notify() {
+  snapshotCache = null;
   for (const l of listeners) l();
 }
 
@@ -46,9 +53,12 @@ export function getFontEntry(family: string): FontEntry | undefined {
 }
 
 export function listFonts(): FontEntry[] {
-  return Array.from(registry.values()).sort((a, b) =>
-    a.family.localeCompare(b.family),
-  );
+  if (snapshotCache === null) {
+    snapshotCache = Array.from(registry.values()).sort((a, b) =>
+      a.family.localeCompare(b.family),
+    );
+  }
+  return snapshotCache;
 }
 
 // ---------- Built-ins ----------

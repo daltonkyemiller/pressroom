@@ -114,9 +114,22 @@ export function renderPipelineAsync(
 export function exportPNG(
   source: CanvasImageSource & { width: number; height: number },
   layers: readonly Layer[],
+  maxDim: number,
 ): Promise<Blob | null> {
-  const { imgData, width, height } = renderPipeline(source, layers, Infinity);
-  const out = new OffscreenCanvas(width, height);
-  out.getContext("2d")!.putImageData(imgData, 0, 0);
+  // Run the whole effect stack at the same working resolution as the
+  // preview so the export is WYSIWYG. Resolution-dependent effects
+  // (halftone dots, dither patterns, grain, edge bleed, displace) look
+  // completely different at full source res than they do in the 900px
+  // preview, so matching resolution is the only way to keep parity.
+  // Then nearest-neighbor upscale to source dims so the exported file
+  // keeps its original size — each effect-pixel becomes a clean block.
+  const { imgData, width, height } = renderPipeline(source, layers, maxDim);
+  const work = new OffscreenCanvas(width, height);
+  work.getContext("2d")!.putImageData(imgData, 0, 0);
+
+  const out = new OffscreenCanvas(source.width, source.height);
+  const ctx = out.getContext("2d")!;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(work, 0, 0, source.width, source.height);
   return out.convertToBlob({ type: "image/png" }).catch(() => null);
 }

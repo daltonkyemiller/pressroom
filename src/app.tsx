@@ -352,7 +352,7 @@ export default function App() {
   // ---------- export ----------
   const onExport = useCallback(async () => {
     if (!sourceImage) return;
-    const blob = await exportPNG(sourceImage, layers);
+    const blob = await exportPNG(sourceImage, layers, MAX_DIM);
     if (!blob) return;
     const link = document.createElement("a");
     link.download = `dither-stack-${Date.now()}.png`;

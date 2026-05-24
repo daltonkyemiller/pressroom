@@ -3,6 +3,7 @@ import {
   IconArrowDownToLine,
   IconArrowRotateAnticlockwise,
   IconChevronRight,
+  IconCopy,
   IconEye,
   IconEyeSlash,
   IconGripDotsVertical,
@@ -28,6 +29,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { ColorControl, SliderControl } from "@/components/dither/controls";
 import { cn } from "@/lib/utils";
 import { DocSvg } from "@/lib/forge/render";
+import { getPrimitiveCenter } from "@/lib/forge/engine";
 import { downloadPng, downloadSvg } from "@/lib/forge/export";
 import {
   makeDefaultDoc,
@@ -48,8 +50,10 @@ import type {
   PrimitiveKind,
 } from "@/lib/forge/types";
 import {
+  GrainControls,
   ModifierControls,
   NodeStyleControls,
+  PaletteEditor,
   PrimitiveControls,
 } from "./controls";
 
@@ -91,6 +95,27 @@ export default function ForgeApp() {
     },
     [],
   );
+
+  const duplicateNode = useCallback((id: number) => {
+    setDoc((d) => {
+      const idx = d.nodes.findIndex((n) => n.id === id);
+      if (idx < 0) return d;
+      const src = d.nodes[idx];
+      const copy: Node = {
+        ...structuredClone(src),
+        id: nextNodeId(),
+        name: `${src.name} copy`,
+        modifiers: src.modifiers.map((m) => ({
+          ...structuredClone(m),
+          id: nextModId(),
+        })),
+      };
+      const nodes = [...d.nodes];
+      nodes.splice(idx + 1, 0, copy);
+      setSelectedNodeId(copy.id);
+      return { ...d, nodes };
+    });
+  }, []);
 
   const toggleNode = useCallback((id: number) => {
     setDoc((d) => ({
@@ -148,7 +173,13 @@ export default function ForgeApp() {
       ...d,
       nodes: d.nodes.map((n) =>
         n.id === nodeId
-          ? { ...n, modifiers: [...n.modifiers, makeModifier(kind, nextModId())] }
+          ? {
+              ...n,
+              modifiers: [
+                ...n.modifiers,
+                makeModifier(kind, nextModId(), getPrimitiveCenter(n.primitive)),
+              ],
+            }
           : n,
       ),
     }));
@@ -160,6 +191,21 @@ export default function ForgeApp() {
       nodes: d.nodes.map((n) =>
         n.id === nodeId ? { ...n, modifiers: n.modifiers.filter((m) => m.id !== modId) } : n,
       ),
+    }));
+  }, []);
+
+  const duplicateModifier = useCallback((nodeId: number, modId: number) => {
+    setDoc((d) => ({
+      ...d,
+      nodes: d.nodes.map((n) => {
+        if (n.id !== nodeId) return n;
+        const idx = n.modifiers.findIndex((m) => m.id === modId);
+        if (idx < 0) return n;
+        const copy: Modifier = { ...structuredClone(n.modifiers[idx]), id: nextModId() };
+        const modifiers = [...n.modifiers];
+        modifiers.splice(idx + 1, 0, copy);
+        return { ...n, modifiers };
+      }),
     }));
   }, []);
 
@@ -314,7 +360,11 @@ export default function ForgeApp() {
         </div>
 
         <ScrollArea className="flex-1 min-h-0">
-          <DocSection doc={doc} onPatch={patchDoc} />
+          <DocSection
+            doc={doc}
+            onPatch={patchDoc}
+            onPatchGrain={(p) => patchDoc({ grain: { ...doc.grain, ...p } })}
+          />
 
           <div className="flex items-center justify-between px-5 pt-3 pb-2">
             <span className="text-xs tracking-widest text-muted-foreground uppercase">
@@ -338,6 +388,7 @@ export default function ForgeApp() {
                   selected={selectedNodeId === node.id}
                   onSelect={() => setSelectedNodeId(node.id)}
                   onToggle={() => toggleNode(node.id)}
+                  onDuplicate={() => duplicateNode(node.id)}
                   onRemove={() => removeNode(node.id)}
                   onReorder={reorderNode}
                 />
@@ -373,11 +424,13 @@ export default function ForgeApp() {
           {selectedNode && (
             <PropertiesPanel
               node={selectedNode}
+              palette={doc.palette}
               onPatchNode={(patch) => patchNode(selectedNode.id, patch)}
               onPatchPrimitive={(patch) => patchPrimitiveParams(selectedNode.id, patch)}
               onAddModifier={(k) => addModifier(selectedNode.id, k)}
               onRemoveModifier={(mid) => removeModifier(selectedNode.id, mid)}
               onToggleModifier={(mid) => toggleModifier(selectedNode.id, mid)}
+              onDuplicateModifier={(mid) => duplicateModifier(selectedNode.id, mid)}
               onReorderModifier={(fromId, toId, edge) =>
                 reorderModifier(selectedNode.id, fromId, toId, edge)
               }
@@ -506,7 +559,15 @@ export default function ForgeApp() {
 
 // ---------- subviews ----------
 
-function DocSection({ doc, onPatch }: { doc: Doc; onPatch: (p: Partial<Doc>) => void }) {
+function DocSection({
+  doc,
+  onPatch,
+  onPatchGrain,
+}: {
+  doc: Doc;
+  onPatch: (p: Partial<Doc>) => void;
+  onPatchGrain: (p: Partial<Doc["grain"]>) => void;
+}) {
   return (
     <div className="border-b border-border bg-muted/20 px-3.5 py-3">
       <div className="mb-2 text-xs tracking-widest text-muted-foreground uppercase">
@@ -533,6 +594,13 @@ function DocSection({ doc, onPatch }: { doc: Doc; onPatch: (p: Partial<Doc>) => 
         value={doc.background}
         onChange={(v) => onPatch({ background: v })}
       />
+      <PaletteEditor palette={doc.palette} onChange={(p) => onPatch({ palette: p })} />
+      <details className="mt-2 [&_summary]:cursor-pointer">
+        <summary className="text-xs tracking-wider text-muted-foreground uppercase mb-1">
+          grain {doc.grain.enabled ? "· on" : "· off"}
+        </summary>
+        <GrainControls grain={doc.grain} onPatch={onPatchGrain} />
+      </details>
     </div>
   );
 }
@@ -546,6 +614,7 @@ function NodeRow({
   selected,
   onSelect,
   onToggle,
+  onDuplicate,
   onRemove,
   onReorder,
 }: {
@@ -554,6 +623,7 @@ function NodeRow({
   selected: boolean;
   onSelect: () => void;
   onToggle: () => void;
+  onDuplicate: () => void;
   onRemove: () => void;
   onReorder: (fromId: number, toId: number, edge: Edge) => void;
 }) {
@@ -657,6 +727,15 @@ function NodeRow({
       <button
         type="button"
         data-node-action
+        onClick={onDuplicate}
+        title="duplicate"
+        className="flex size-6 shrink-0 items-center justify-center border border-border hover:border-foreground/60 hover:bg-muted"
+      >
+        <IconCopy className="size-3" />
+      </button>
+      <button
+        type="button"
+        data-node-action
         onClick={onRemove}
         title="remove"
         className="flex size-6 shrink-0 items-center justify-center border border-border hover:border-destructive hover:bg-destructive hover:text-background"
@@ -680,20 +759,24 @@ function DropIndicator({ position }: { position: "top" | "bottom" }) {
 
 function PropertiesPanel({
   node,
+  palette,
   onPatchNode,
   onPatchPrimitive,
   onAddModifier,
   onRemoveModifier,
   onToggleModifier,
+  onDuplicateModifier,
   onReorderModifier,
   onPatchModifierParams,
 }: {
   node: Node;
+  palette: string[];
   onPatchNode: (patch: Partial<Node>) => void;
   onPatchPrimitive: (patch: Record<string, unknown>) => void;
   onAddModifier: (k: ModifierKind) => void;
   onRemoveModifier: (mid: number) => void;
   onToggleModifier: (mid: number) => void;
+  onDuplicateModifier: (mid: number) => void;
   onReorderModifier: (fromId: number, toId: number, edge: Edge) => void;
   onPatchModifierParams: (mid: number, patch: Record<string, unknown>) => void;
 }) {
@@ -717,8 +800,10 @@ function PropertiesPanel({
               <ModifierBlock
                 key={mod.id}
                 mod={mod}
+                palette={palette}
                 onRemove={() => onRemoveModifier(mod.id)}
                 onToggle={() => onToggleModifier(mod.id)}
+                onDuplicate={() => onDuplicateModifier(mod.id)}
                 onPatch={(patch) => onPatchModifierParams(mod.id, patch)}
                 onReorder={onReorderModifier}
               />
@@ -758,6 +843,7 @@ function PropertiesPanel({
           stroke={node.stroke}
           strokeWidth={node.strokeWidth}
           opacity={node.opacity}
+          palette={palette}
           onPatch={onPatchNode}
         />
       </PanelSection>
@@ -795,14 +881,18 @@ function PanelSection({
 
 function ModifierBlock({
   mod,
+  palette,
   onRemove,
   onToggle,
+  onDuplicate,
   onPatch,
   onReorder,
 }: {
   mod: Modifier;
+  palette: string[];
   onRemove: () => void;
   onToggle: () => void;
+  onDuplicate: () => void;
   onPatch: (patch: Record<string, unknown>) => void;
   onReorder: (fromId: number, toId: number, edge: Edge) => void;
 }) {
@@ -901,6 +991,14 @@ function ModifierBlock({
         </button>
         <button
           type="button"
+          onClick={onDuplicate}
+          title="duplicate"
+          className="flex size-5 items-center justify-center border border-border hover:border-foreground/60 hover:bg-muted"
+        >
+          <IconCopy className="size-2.5" />
+        </button>
+        <button
+          type="button"
           onClick={onRemove}
           title="remove"
           className="flex size-5 items-center justify-center border border-border hover:border-destructive hover:bg-destructive hover:text-background"
@@ -910,7 +1008,7 @@ function ModifierBlock({
       </div>
       {open && (
         <div data-mod-body className="border-t border-border/40 px-2.5 py-2">
-          <ModifierControls modifier={mod} onPatch={onPatch} />
+          <ModifierControls modifier={mod} palette={palette} onPatch={onPatch} />
         </div>
       )}
     </div>

@@ -1,9 +1,14 @@
 import { Fragment } from "react";
-import { barStackBars, expandNode, type ClipDef } from "./engine";
+import { barStackBars, expandNode, polygonPath, wedgePath, type ClipDef } from "./engine";
 import type { Doc, Node, Primitive } from "./types";
 
-// Renders a single primitive shape (not modifier-expanded). The fill/stroke
-// come from the node so the same primitive can render with different style.
+const FONT_FAMILIES: Record<string, string> = {
+  mondwest: '"Mondwest", serif',
+  "geist-pixel": '"Geist Pixel", monospace',
+  "neue-bit": '"Neue Bit", monospace',
+  sans: "system-ui, sans-serif",
+};
+
 function renderPrimitive(primitive: Primitive, nodeKey: string) {
   switch (primitive.kind) {
     case "rect": {
@@ -15,13 +20,12 @@ function renderPrimitive(primitive: Primitive, nodeKey: string) {
       return <ellipse cx={p.cx} cy={p.cy} rx={p.rx} ry={p.ry} />;
     }
     case "barStack": {
-      const bars = barStackBars(primitive.params);
+      const p = primitive.params;
+      const bars = barStackBars(p);
       return (
         <g
           transform={
-            primitive.params.rotation
-              ? `rotate(${primitive.params.rotation} ${primitive.params.cx} ${primitive.params.cy})`
-              : undefined
+            p.rotation ? `rotate(${p.rotation} ${p.cx} ${p.cy})` : undefined
           }
         >
           {bars.map((b, i) => (
@@ -30,12 +34,32 @@ function renderPrimitive(primitive: Primitive, nodeKey: string) {
         </g>
       );
     }
+    case "wedge":
+      return <path d={wedgePath(primitive.params)} />;
+    case "polygon":
+      return <path d={polygonPath(primitive.params)} />;
+    case "text": {
+      const p = primitive.params;
+      return (
+        <text
+          x={p.cx}
+          y={p.cy}
+          fontFamily={FONT_FAMILIES[p.font] ?? FONT_FAMILIES.sans}
+          fontSize={p.size}
+          textAnchor={p.anchor}
+          dominantBaseline={p.baseline}
+          letterSpacing={p.letterSpacing || undefined}
+          transform={p.rotation ? `rotate(${p.rotation} ${p.cx} ${p.cy})` : undefined}
+          style={{ userSelect: "none" }}
+        >
+          {p.content}
+        </text>
+      );
+    }
   }
 }
 
 function ClipPathDef({ def }: { def: ClipDef }) {
-  // SVG clip-path: only what's INSIDE the shape passes. For invert mode we
-  // construct an even-odd compound path of (full canvas) - (clip shape).
   if (def.invert) {
     return (
       <clipPath id={def.id} clipPathUnits="userSpaceOnUse">
@@ -63,12 +87,6 @@ function ClipPathDef({ def }: { def: ClipDef }) {
 
 function NodeContent({ node }: { node: Node }) {
   const { instances, clipDefs } = expandNode(node);
-  const style = {
-    fill: node.fill,
-    stroke: node.stroke,
-    strokeWidth: node.strokeWidth || undefined,
-    opacity: node.opacity,
-  };
   return (
     <Fragment>
       {clipDefs.length > 0 && (
@@ -78,17 +96,65 @@ function NodeContent({ node }: { node: Node }) {
           ))}
         </defs>
       )}
-      <g style={style}>
+      <g
+        fill={node.fill}
+        stroke={node.stroke}
+        strokeWidth={node.strokeWidth || undefined}
+        opacity={node.opacity}
+      >
         {instances.map((inst, i) => (
           <g
             key={i}
             transform={inst.transform || undefined}
             clipPath={inst.clipPathId ? `url(#${inst.clipPathId})` : undefined}
+            fill={inst.fill}
+            stroke={inst.stroke}
+            opacity={inst.opacity}
           >
             {renderPrimitive(node.primitive, `${node.id}-${i}`)}
           </g>
         ))}
       </g>
+    </Fragment>
+  );
+}
+
+function GrainOverlay({ doc }: { doc: Doc }) {
+  if (!doc.grain.enabled || doc.grain.amount <= 0) return null;
+  const id = "forge-grain";
+  return (
+    <Fragment>
+      <defs>
+        <filter id={id} x="0" y="0" width="100%" height="100%">
+          <feTurbulence
+            type="fractalNoise"
+            baseFrequency={doc.grain.frequency}
+            numOctaves={doc.grain.octaves}
+            seed={doc.grain.seed}
+            stitchTiles="stitch"
+          />
+          {doc.grain.monochrome && (
+            <feColorMatrix
+              type="matrix"
+              values="0 0 0 0 1
+                      0 0 0 0 1
+                      0 0 0 0 1
+                      0 0 0 0.5 0"
+            />
+          )}
+          <feComponentTransfer>
+            <feFuncA type="linear" slope={doc.grain.amount} intercept={0} />
+          </feComponentTransfer>
+        </filter>
+      </defs>
+      <rect
+        x={0}
+        y={0}
+        width={doc.width}
+        height={doc.height}
+        filter={`url(#${id})`}
+        style={{ mixBlendMode: "overlay" }}
+      />
     </Fragment>
   );
 }
@@ -132,6 +198,7 @@ export function DocSvg({
           </g>
         ) : null,
       )}
+      <GrainOverlay doc={doc} />
     </svg>
   );
 }

@@ -1,11 +1,22 @@
 // SVG + PNG export. SVG is built as a string (faster + no SSR dep than
 // react-dom/server). PNG rasterizes the SVG via a Blob URL onto a canvas.
 
-import { barStackBars, expandNode, type ClipDef } from "./engine";
+import { barStackBars, expandNode, polygonPath, wedgePath, type ClipDef } from "./engine";
 import type { Doc, Node, Primitive } from "./types";
+
+const FONT_FAMILIES: Record<string, string> = {
+  mondwest: '"Mondwest", serif',
+  "geist-pixel": '"Geist Pixel", monospace',
+  "neue-bit": '"Neue Bit", monospace',
+  sans: "system-ui, sans-serif",
+};
 
 function escapeAttr(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+}
+
+function escapeText(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 function primitiveSvg(primitive: Primitive): string {
@@ -22,12 +33,28 @@ function primitiveSvg(primitive: Primitive): string {
     case "barStack": {
       const p = primitive.params;
       const bars = barStackBars(p)
-        .map((b) => `<rect x="${b.x.toFixed(2)}" y="${b.y.toFixed(2)}" width="${b.w.toFixed(2)}" height="${b.h.toFixed(2)}" />`)
+        .map(
+          (b) =>
+            `<rect x="${b.x.toFixed(2)}" y="${b.y.toFixed(2)}" width="${b.w.toFixed(2)}" height="${b.h.toFixed(2)}" />`,
+        )
         .join("");
       if (p.rotation) {
         return `<g transform="rotate(${p.rotation} ${p.cx} ${p.cy})">${bars}</g>`;
       }
       return bars;
+    }
+    case "wedge":
+      return `<path d="${wedgePath(primitive.params)}" />`;
+    case "polygon":
+      return `<path d="${polygonPath(primitive.params)}" />`;
+    case "text": {
+      const p = primitive.params;
+      const ff = FONT_FAMILIES[p.font] ?? FONT_FAMILIES.sans;
+      const transform = p.rotation
+        ? ` transform="rotate(${p.rotation} ${p.cx} ${p.cy})"`
+        : "";
+      const ls = p.letterSpacing ? ` letter-spacing="${p.letterSpacing}"` : "";
+      return `<text x="${p.cx}" y="${p.cy}" font-family='${escapeAttr(ff)}' font-size="${p.size}" text-anchor="${p.anchor}" dominant-baseline="${p.baseline}"${ls}${transform}>${escapeText(p.content)}</text>`;
     }
   }
 }
@@ -50,21 +77,32 @@ function clipDefSvg(def: ClipDef): string {
 function nodeSvg(node: Node): string {
   const { instances, clipDefs } = expandNode(node);
   const defs = clipDefs.length > 0 ? `<defs>${clipDefs.map(clipDefSvg).join("")}</defs>` : "";
-  const styleAttr = `fill="${escapeAttr(node.fill)}" stroke="${escapeAttr(node.stroke)}" stroke-width="${node.strokeWidth}" opacity="${node.opacity}"`;
+  const nodeAttrs = `fill="${escapeAttr(node.fill)}" stroke="${escapeAttr(node.stroke)}" stroke-width="${node.strokeWidth}" opacity="${node.opacity}"`;
   const body = instances
     .map((inst) => {
       const t = inst.transform ? ` transform="${escapeAttr(inst.transform.trim())}"` : "";
       const cp = inst.clipPathId ? ` clip-path="url(#${inst.clipPathId})"` : "";
-      return `<g${t}${cp}>${primitiveSvg(node.primitive)}</g>`;
+      const fill = inst.fill ? ` fill="${escapeAttr(inst.fill)}"` : "";
+      const stroke = inst.stroke ? ` stroke="${escapeAttr(inst.stroke)}"` : "";
+      const op = inst.opacity != null ? ` opacity="${inst.opacity}"` : "";
+      return `<g${t}${cp}${fill}${stroke}${op}>${primitiveSvg(node.primitive)}</g>`;
     })
     .join("");
-  return `${defs}<g ${styleAttr}>${body}</g>`;
+  return `${defs}<g ${nodeAttrs}>${body}</g>`;
+}
+
+function grainSvg(doc: Doc): string {
+  if (!doc.grain.enabled || doc.grain.amount <= 0) return "";
+  const mono = doc.grain.monochrome
+    ? `<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.5 0" />`
+    : "";
+  return `<defs><filter id="forge-grain" x="0" y="0" width="100%" height="100%"><feTurbulence type="fractalNoise" baseFrequency="${doc.grain.frequency}" numOctaves="${doc.grain.octaves}" seed="${doc.grain.seed}" stitchTiles="stitch" />${mono}<feComponentTransfer><feFuncA type="linear" slope="${doc.grain.amount}" intercept="0" /></feComponentTransfer></filter></defs><rect x="0" y="0" width="${doc.width}" height="${doc.height}" filter="url(#forge-grain)" style="mix-blend-mode:overlay" />`;
 }
 
 export function docToSvgString(doc: Doc): string {
   const nodes = doc.nodes.filter((n) => n.enabled).map(nodeSvg).join("");
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${doc.width} ${doc.height}" width="${doc.width}" height="${doc.height}"><rect x="0" y="0" width="${doc.width}" height="${doc.height}" fill="${escapeAttr(doc.background)}" />${nodes}</svg>`;
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${doc.width} ${doc.height}" width="${doc.width}" height="${doc.height}"><rect x="0" y="0" width="${doc.width}" height="${doc.height}" fill="${escapeAttr(doc.background)}" />${nodes}${grainSvg(doc)}</svg>`;
 }
 
 export function downloadSvg(doc: Doc, filename: string): void {

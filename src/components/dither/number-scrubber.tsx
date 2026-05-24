@@ -77,6 +77,7 @@ function NumberScrubber({
   const [isEditing, setIsEditing] = React.useState(false);
 
   const initialValueRef = React.useRef(value);
+  const lastPointerDownAtRef = React.useRef(0);
 
   React.useEffect(() => {
     if (isEditing) return;
@@ -115,11 +116,17 @@ function NumberScrubber({
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
     if (disabled) return;
 
-    // Double-click resets to the initial value. Detect here (rather than via
-    // a separate dblclick handler) because pointer capture during a drag can
-    // swallow click/dblclick events.
-    if (event.detail === 2) {
+    // Double-click resets to the initial value. We can't rely on event.detail
+    // here because pointer capture during the first drag breaks the browser's
+    // click-count chain (the second pointerdown comes in as detail=1). Track
+    // timestamps manually so the reset works regardless of pen/touch/mouse.
+    const now =
+      typeof performance !== "undefined" ? performance.now() : Date.now();
+    const isDoubleClick = now - lastPointerDownAtRef.current < 300;
+    lastPointerDownAtRef.current = now;
+    if (isDoubleClick) {
       event.preventDefault();
+      lastPointerDownAtRef.current = 0;
       onValueChange(initialValueRef.current);
       return;
     }

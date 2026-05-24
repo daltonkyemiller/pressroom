@@ -17,6 +17,7 @@ import type {
   RadialRepeatParams,
   RectParams,
   ScatterParams,
+  SvgParams,
   TextParams,
   WedgeParams,
 } from "./types";
@@ -28,6 +29,7 @@ export const PRIMITIVE_LABELS: Record<PrimitiveKind, string> = {
   wedge: "Wedge",
   polygon: "Polygon / star",
   text: "Text",
+  svg: "SVG",
 };
 
 export const MODIFIER_LABELS: Record<ModifierKind, string> = {
@@ -48,7 +50,13 @@ export const PRIMITIVE_KINDS: PrimitiveKind[] = [
   "rect",
   "ellipse",
   "text",
+  "svg",
 ];
+
+// A simple placeholder so a new SVG primitive shows something instead
+// of an empty space — a 5-point star at 0..100 viewBox. Replaced when
+// the user pastes or uploads their own.
+const PLACEHOLDER_SVG = `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><polygon points="50,5 61,38 95,38 67,57 78,90 50,70 22,90 33,57 5,38 39,38" /></svg>`;
 export const MODIFIER_KINDS: ModifierKind[] = [
   "linearRepeat",
   "radialRepeat",
@@ -145,6 +153,17 @@ export function makePrimitive(kind: PrimitiveKind): Primitive {
           rotation: 0,
           letterSpacing: 0,
         } satisfies TextParams,
+      };
+    case "svg":
+      return {
+        kind: "svg",
+        params: {
+          cx: CENTER,
+          cy: CENTER,
+          width: 300,
+          height: 300,
+          content: PLACEHOLDER_SVG,
+        } satisfies SvgParams,
       };
   }
 }
@@ -350,6 +369,22 @@ function randomizePrimitive(primitive: Primitive): Primitive {
           letterSpacing: Math.floor((r() - 0.5) * 20),
         },
       };
+    case "svg": {
+      // Randomize position + size only; the content stays as the user set
+      // it (randomizing the loaded markup makes no sense).
+      const w = 120 + r() * 320;
+      const h = 120 + r() * 320;
+      return {
+        kind: "svg",
+        params: {
+          ...primitive.params,
+          cx: jitter(CENTER, 200),
+          cy: jitter(CENTER, 200),
+          width: w,
+          height: h,
+        },
+      };
+    }
   }
 }
 

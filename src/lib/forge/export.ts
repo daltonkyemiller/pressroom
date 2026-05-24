@@ -5,6 +5,7 @@ import {
   expandNode,
   getBooleanHiddenIds,
   polygonPath,
+  svgPlacementTransform,
   wedgePath,
   type ClipDef,
 } from "./engine";
@@ -43,6 +44,11 @@ function primitiveSvg(primitive: Primitive): string {
       return `<path d="${wedgePath(primitive.params)}" />`;
     case "polygon":
       return `<path d="${polygonPath(primitive.params)}" />`;
+    case "svg": {
+      const placed = svgPlacementTransform(primitive.params);
+      if (!placed) return "";
+      return `<g transform="${placed.transform}">${placed.body}</g>`;
+    }
     case "text": {
       const p = primitive.params;
       const ff = cssFontFamily(p.font);

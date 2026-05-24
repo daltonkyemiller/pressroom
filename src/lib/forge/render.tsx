@@ -3,6 +3,7 @@ import {
   expandNode,
   getBooleanHiddenIds,
   polygonPath,
+  svgPlacementTransform,
   wedgePath,
   type ClipDef,
 } from "./engine";
@@ -51,6 +52,16 @@ function renderPrimitive(primitive: Primitive) {
       return <path d={wedgePath(primitive.params)} />;
     case "polygon":
       return <path d={polygonPath(primitive.params)} />;
+    case "svg": {
+      const placed = svgPlacementTransform(primitive.params);
+      if (!placed) return null;
+      return (
+        <g
+          transform={placed.transform}
+          dangerouslySetInnerHTML={{ __html: placed.body }}
+        />
+      );
+    }
     case "text": {
       const p = primitive.params;
       return (

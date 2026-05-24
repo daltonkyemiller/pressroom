@@ -39,6 +39,16 @@ export type PolygonParams = {
   starInner: number; // 0..1 — 1 = regular polygon, <1 = star with inner radius = radius * starInner
   rotation: number;
 };
+export type SvgParams = {
+  cx: number;
+  cy: number;
+  width: number;
+  height: number;
+  // Raw SVG markup as the user pasted or uploaded it. Engine parses out
+  // the viewBox + inner content at render time so a transform places it
+  // at (cx, cy) and scales it to (width, height).
+  content: string;
+};
 export type TextParams = {
   cx: number;
   cy: number;
@@ -60,7 +70,8 @@ export type Primitive =
   | { kind: "barStack"; params: BarStackParams }
   | { kind: "wedge"; params: WedgeParams }
   | { kind: "polygon"; params: PolygonParams }
-  | { kind: "text"; params: TextParams };
+  | { kind: "text"; params: TextParams }
+  | { kind: "svg"; params: SvgParams };
 
 export type PrimitiveKind = Primitive["kind"];
 

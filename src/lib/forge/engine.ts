@@ -158,7 +158,71 @@ export function getPrimitiveCenter(p: Primitive): { x: number; y: number } {
       return { x: p.params.cx, y: p.params.cy };
     case "text":
       return { x: p.params.cx, y: p.params.cy };
+    case "svg":
+      return { x: p.params.cx, y: p.params.cy };
   }
+}
+
+// Parse a user-provided SVG string into the viewBox + inner content so
+// the engine can place + scale it via a wrapping <g transform>. Falls
+// back to a 100×100 viewBox if the source is malformed or missing one.
+// Cached by exact content string — parsing the same SVG repeatedly per
+// render would be wasteful for large files.
+type ParsedSvg = { viewBox: [number, number, number, number]; body: string };
+const svgParseCache = new Map<string, ParsedSvg>();
+export function parseSvgContent(content: string): ParsedSvg {
+  const cached = svgParseCache.get(content);
+  if (cached) return cached;
+  let viewBox: [number, number, number, number] = [0, 0, 100, 100];
+  let body = "";
+  try {
+    const doc = new DOMParser().parseFromString(content, "image/svg+xml");
+    const root = doc.documentElement;
+    // parseFromString returns a <parsererror> doc on malformed input.
+    if (root && root.nodeName !== "parsererror") {
+      const vb = root.getAttribute("viewBox");
+      if (vb) {
+        const parts = vb.trim().split(/[\s,]+/).map(Number);
+        if (parts.length === 4 && parts.every((n) => Number.isFinite(n))) {
+          viewBox = [parts[0], parts[1], parts[2], parts[3]];
+        }
+      } else {
+        const w = parseFloat(root.getAttribute("width") || "");
+        const h = parseFloat(root.getAttribute("height") || "");
+        if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+          viewBox = [0, 0, w, h];
+        }
+      }
+      body = root.innerHTML;
+    }
+  } catch {
+    // Leave defaults; the SVG primitive will render an empty <g>.
+  }
+  const parsed: ParsedSvg = { viewBox, body };
+  if (svgParseCache.size > 64) svgParseCache.clear(); // crude LRU cap
+  svgParseCache.set(content, parsed);
+  return parsed;
+}
+
+// SVG primitive's outer transform: translate to (cx, cy), scale to
+// (width, height), and shift viewBox origin to 0,0. Reused by render
+// and export so the geometry stays identical.
+export function svgPlacementTransform(p: {
+  cx: number;
+  cy: number;
+  width: number;
+  height: number;
+  content: string;
+}): { transform: string; body: string } | null {
+  const { viewBox, body } = parseSvgContent(p.content);
+  const [vx, vy, vw, vh] = viewBox;
+  if (vw <= 0 || vh <= 0 || !body) return null;
+  const sx = p.width / vw;
+  const sy = p.height / vh;
+  const tx = p.cx - p.width / 2;
+  const ty = p.cy - p.height / 2;
+  const transform = `translate(${tx} ${ty}) scale(${sx} ${sy}) translate(${-vx} ${-vy})`;
+  return { transform, body };
 }
 
 // `a` is the existing instance transform; `b` is the new transform a

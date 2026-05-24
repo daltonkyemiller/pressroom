@@ -11,8 +11,9 @@
 // run the op. paper.js does the SVG transform parsing for us.
 
 import paper from "paper";
+import { svgPlacementTransform } from "./engine";
 import { getFontEntry } from "./font-registry";
-import type { Node, Primitive, TextParams } from "./types";
+import type { Node, Primitive, SvgParams, TextParams } from "./types";
 
 export type BooleanOp = "union" | "subtract" | "intersect" | "exclude";
 
@@ -46,11 +47,19 @@ function primitiveSvgFragment(p: Primitive): string {
     case "wedge":
     case "polygon":
     case "text":
+    case "svg":
       // Handled at the buildNodeSvg call site (wedge/polygon emit a path
       // d-string directly; text uses textPathSvg to convert glyphs to a
-      // path via opentype.js).
+      // path via opentype.js; svg uses svgPrimitiveFragment to place the
+      // parsed inner content).
       return "";
   }
+}
+
+function svgPrimitiveFragment(p: SvgParams): string {
+  const placed = svgPlacementTransform(p);
+  if (!placed) return "";
+  return `<g transform="${placed.transform}">${placed.body}</g>`;
 }
 
 function textPathSvg(p: TextParams): string {
@@ -95,6 +104,8 @@ function buildNodeSvg(node: Node, instances: Array<{ transform: string }>): stri
     // Returns "" if the font's bytes haven't been parsed yet (e.g. local
     // font still lazy-loading), and the boolean degrades gracefully.
     shape = textPathSvg(node.primitive.params);
+  } else if (node.primitive.kind === "svg") {
+    shape = svgPrimitiveFragment(node.primitive.params);
   } else {
     shape = primitiveSvgFragment(node.primitive);
   }

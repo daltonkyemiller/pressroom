@@ -336,10 +336,21 @@ export default function ForgeApp() {
           if (n.id !== selectedNodeId) return n;
           // Re-anchor the primitive on doc center. Every primitive has a
           // (cx, cy) pair (rect was converted) so this is uniform.
-          const newPrim = {
-            ...n.primitive,
-            params: { ...n.primitive.params, cx: docCx, cy: docCy },
-          } as Node["primitive"];
+          //
+          // Text has the extra wrinkle that (cx, cy) is the SVG anchor
+          // point, not necessarily the visual center — with anchor="start"
+          // baseline="alphabetic" the visual is offset from (cx, cy). When
+          // the user clicks "center" they mean "visually center", so also
+          // reset anchor + baseline to middle/middle.
+          const baseParams = { ...n.primitive.params, cx: docCx, cy: docCy };
+          const newPrim = (
+            n.primitive.kind === "text"
+              ? {
+                  ...n.primitive,
+                  params: { ...baseParams, anchor: "middle", baseline: "middle" },
+                }
+              : { ...n.primitive, params: baseParams }
+          ) as Node["primitive"];
           // For modifiers that hold their own center, also re-anchor.
           const newMods = n.modifiers.map((m) => {
             if (m.kind === "radialRepeat" || m.kind === "clip") {

@@ -115,27 +115,29 @@ type LocalFontData = {
   blob: () => Promise<Blob>;
 };
 
-type QueryLocalFontsApi = (options?: {
-  postscriptNames?: string[];
-}) => Promise<LocalFontData[]>;
+// Has to be called as a method on window — detaching it into a local
+// reference loses `this` and the call silently no-ops (or throws
+// "Illegal invocation" depending on the build).
+type WindowWithLocalFonts = Window & {
+  queryLocalFonts: (options?: {
+    postscriptNames?: string[];
+  }) => Promise<LocalFontData[]>;
+};
 
-function getQueryLocalFonts(): QueryLocalFontsApi | undefined {
-  if (typeof window === "undefined") return undefined;
-  return (window as unknown as { queryLocalFonts?: QueryLocalFontsApi })
-    .queryLocalFonts;
+function hasLocalFonts(): boolean {
+  return typeof window !== "undefined" && "queryLocalFonts" in window;
 }
 
 export function isLocalFontsSupported(): boolean {
-  return getQueryLocalFonts() !== undefined;
+  return hasLocalFonts();
 }
 
 // Asks the browser for the list of system fonts. Throws "NotAllowedError"
 // if the user denied permission. Adds one entry per family — multiple
 // faces of the same family get collapsed.
 export async function loadLocalFonts(): Promise<number> {
-  const query = getQueryLocalFonts();
-  if (!query) return 0;
-  const fonts = await query();
+  if (!hasLocalFonts()) return 0;
+  const fonts = await (window as unknown as WindowWithLocalFonts).queryLocalFonts();
   let added = 0;
   const seenFamilies = new Set<string>();
   for (const fd of fonts) {
@@ -165,10 +167,11 @@ export async function ensureFontLoaded(
   if (!entry) return null;
   if (entry.font) return entry.font;
   if (entry.source !== "local" || !entry.postscriptName) return null;
-  const query = getQueryLocalFonts();
-  if (!query) return null;
+  if (!hasLocalFonts()) return null;
   try {
-    const matches = await query({ postscriptNames: [entry.postscriptName] });
+    const matches = await (window as unknown as WindowWithLocalFonts).queryLocalFonts({
+      postscriptNames: [entry.postscriptName],
+    });
     if (matches.length === 0) return null;
     const blob = await matches[0].blob();
     const buf = await blob.arrayBuffer();

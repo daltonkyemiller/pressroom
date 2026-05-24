@@ -11,7 +11,8 @@
 // run the op. paper.js does the SVG transform parsing for us.
 
 import paper from "paper";
-import type { Node, Primitive } from "./types";
+import { getFontEntry } from "./font-registry";
+import type { Node, Primitive, TextParams } from "./types";
 
 export type BooleanOp = "union" | "subtract" | "intersect" | "exclude";
 
@@ -47,9 +48,37 @@ function primitiveSvgFragment(p: Primitive): string {
       // Handled at the call site by emitting a <path d="..."> directly.
       return "";
     case "text":
-      // Text -> path requires font glyph outlines; skip for boolean ops in v1.
-      return "";
+      // Text booleans require glyph outlines. Looked up in the font
+      // registry (preloaded built-ins + lazy-loaded local fonts). If the
+      // font isn't parseable (e.g. WOFF2 with opentype.js) we silently
+      // skip — display still works, the boolean just can't see geometry.
+      return textPathSvg(p.params);
   }
+}
+
+function textPathSvg(p: TextParams): string {
+  const entry = getFontEntry(p.font);
+  if (!entry?.font) return "";
+  // opentype.js's getPath takes the baseline-left as the origin and the
+  // size in pixels. SVG <text> with our anchor/baseline params positions
+  // differently, so shift the origin to roughly match:
+  //   - anchor "middle"/"end" → shift x by half/full advance width
+  //   - baseline "hanging" → shift y down by ~size (top of cap)
+  //   - baseline "middle" → shift y down by ~size * 0.35 (cap-half)
+  //   - baseline "alphabetic" (default) → no shift
+  let x = p.cx;
+  let y = p.cy;
+  const advance = entry.font.getAdvanceWidth(p.content, p.size);
+  if (p.anchor === "middle") x -= advance / 2;
+  else if (p.anchor === "end") x -= advance;
+  if (p.baseline === "hanging") y += p.size;
+  else if (p.baseline === "middle") y += p.size * 0.35;
+  const d = entry.font.getPath(p.content, x, y, p.size).toPathData(3);
+  if (!d) return "";
+  if (p.rotation) {
+    return `<g transform="rotate(${p.rotation} ${p.cx} ${p.cy})"><path d="${d}" /></g>`;
+  }
+  return `<path d="${d}" />`;
 }
 
 function buildNodeSvg(node: Node, instances: Array<{ transform: string }>): string {

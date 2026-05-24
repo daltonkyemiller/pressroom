@@ -56,6 +56,7 @@ import type {
   PrimitiveKind,
 } from "@/lib/forge/types";
 import {
+  FontsSection,
   GrainControls,
   LinkedSliders,
   ModifierControls,
@@ -63,6 +64,7 @@ import {
   PaletteEditor,
   PrimitiveControls,
 } from "./controls";
+import { initBuiltInFonts } from "@/lib/forge/font-registry";
 
 const ZOOM_MIN = 0.1;
 const ZOOM_MAX = 8;
@@ -356,6 +358,12 @@ export default function ForgeApp() {
       };
     });
   }, [selectedNodeId, setDoc]);
+
+  // Kick off built-in font parsing so booleans on text work without
+  // ceremony. Subsequent local-fonts loads happen on user action.
+  useEffect(() => {
+    void initBuiltInFonts();
+  }, []);
 
   // ---------- keyboard shortcuts ----------
   useEffect(() => {
@@ -747,6 +755,12 @@ function DocSection({
         />
       )}
       <PaletteEditor palette={doc.palette} onChange={(p) => onPatch({ palette: p })} />
+      <details className="mt-2 [&_summary]:cursor-pointer">
+        <summary className="text-xs tracking-wider text-muted-foreground uppercase mb-1">
+          fonts
+        </summary>
+        <FontsSection />
+      </details>
       <details className="mt-2 [&_summary]:cursor-pointer">
         <summary className="text-xs tracking-wider text-muted-foreground uppercase mb-1">
           grain {doc.grain.enabled ? "· on" : "· off"}

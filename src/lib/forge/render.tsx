@@ -8,12 +8,11 @@ import {
 } from "./engine";
 import type { Doc, Node, Primitive } from "./types";
 
-const FONT_FAMILIES: Record<string, string> = {
-  mondwest: '"Mondwest", serif',
-  "geist-pixel": '"Geist Pixel", monospace',
-  "neue-bit": '"Neue Bit", monospace',
-  sans: "system-ui, sans-serif",
-};
+// Wrap family names in quotes (CSS-safe for families with spaces), with
+// a generic-family fallback so unknown fonts still render something.
+function cssFontFamily(family: string): string {
+  return `"${family.replace(/"/g, '\\"')}", system-ui, sans-serif`;
+}
 
 function renderPrimitive(primitive: Primitive) {
   switch (primitive.kind) {
@@ -58,7 +57,7 @@ function renderPrimitive(primitive: Primitive) {
         <text
           x={p.cx}
           y={p.cy}
-          fontFamily={FONT_FAMILIES[p.font] ?? FONT_FAMILIES.sans}
+          fontFamily={cssFontFamily(p.font)}
           fontSize={p.size}
           textAnchor={p.anchor}
           dominantBaseline={p.baseline}

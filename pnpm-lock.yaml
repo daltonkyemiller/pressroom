@@ -50,6 +50,9 @@ importers:
       nucleo-pixel:
         specifier: ^1.2.0
         version: 1.3.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      opentype.js:
+        specifier: ^2.0.0
+        version: 2.0.0
       paper:
         specifier: ^0.12.18
         version: 0.12.18
@@ -108,6 +111,9 @@ importers:
       '@types/node':
         specifier: ^24.12.3
         version: 24.12.4
+      '@types/opentype.js':
+        specifier: ^1.3.9
+        version: 1.3.9
       '@types/react':
         specifier: ^19.2.14
         version: 19.2.15
@@ -1389,6 +1395,9 @@ packages:
   '@types/node@24.12.4':
     resolution: {integrity: sha512-GUUEShf+PBCGW2KaXwcIt3Yk+e3pkKwWKb9GSyM9WQVE+ep2jzmHdGsHzu4wgcZy5fN9FBdVzjpBQsYlpfpgLA==}
 
+  '@types/opentype.js@1.3.9':
+    resolution: {integrity: sha512-KOGywvDPncA4/tTWV5xKNhjpsoSSAHIx3mHOhL5l3XX+c6Xu2dQnHvGs7mRNQsQRte1EqmQ0cPQQ8Z14lkv+yw==}
+
   '@types/react-dom@19.2.3':
     resolution: {integrity: sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ==}
     peerDependencies:
@@ -2507,6 +2516,10 @@ packages:
   open@11.0.0:
     resolution: {integrity: sha512-smsWv2LzFjP03xmvFoJ331ss6h+jixfA4UUV/Bsiyuu4YJPfN+FIQGOIiv4w9/+MoHkfkJ22UIaQWRVFRfH6Vw==}
     engines: {node: '>=20'}
+
+  opentype.js@2.0.0:
+    resolution: {integrity: sha512-kCyjv6xdDY1W/jLWZ/L3QhhTlKUqDZMQ5+Jdlw12b3dXkKNpYBqqlMMj0YDQPShWFTMwgZI1hG14kN3XUDSg/A==}
+    hasBin: true
 
   ora@8.2.0:
     resolution: {integrity: sha512-weP+BZ8MVNnlCm8c0Qdc1WSWq4Qn7I+9CJGm7Qali6g44e/PUzbjNqJX5NJ9ljlNMosfJvg1fKEGILklK9cwnw==}
@@ -4359,6 +4372,8 @@ snapshots:
     dependencies:
       undici-types: 7.16.0
 
+  '@types/opentype.js@1.3.9': {}
+
   '@types/react-dom@19.2.3(@types/react@19.2.15)':
     dependencies:
       '@types/react': 19.2.15
@@ -5347,6 +5362,8 @@ snapshots:
       is-inside-container: 1.0.0
       powershell-utils: 0.1.0
       wsl-utils: 0.3.1
+
+  opentype.js@2.0.0: {}
 
   ora@8.2.0:
     dependencies:

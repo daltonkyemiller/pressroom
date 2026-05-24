@@ -44,7 +44,10 @@ export type TextParams = {
   cy: number;
   content: string;
   size: number;
-  font: "mondwest" | "geist-pixel" | "neue-bit" | "sans";
+  // CSS font-family value. Matched against the font registry to find an
+  // opentype.Font for boolean ops; falls back to the literal string if not
+  // registered (the browser may still render it if it's a system font).
+  font: string;
   anchor: "start" | "middle" | "end";
   baseline: "hanging" | "middle" | "alphabetic";
   rotation: number;

@@ -1,5 +1,11 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { IconLink, IconLinkBroken, IconPlus, IconXmark } from "nucleo-pixel";
+import {
+  ensureFontLoaded,
+  listFonts,
+  loadLocalFonts,
+  subscribeFonts,
+} from "@/lib/forge/font-registry";
 import {
   ColorControl,
   SegControl,
@@ -249,7 +255,21 @@ function PolygonControls({ params, onPatch }: { params: PolygonParams; onPatch: 
   );
 }
 
+function useFontList() {
+  return useSyncExternalStore(
+    subscribeFonts,
+    () => listFonts(),
+    () => listFonts(),
+  );
+}
+
 function TextControls({ params, onPatch }: { params: TextParams; onPatch: Patch }) {
+  const fonts = useFontList();
+  // Lazy-load font bytes when the user picks a font (so booleans + display
+  // both work for local fonts).
+  useEffect(() => {
+    void ensureFontLoaded(params.font);
+  }, [params.font]);
   return (
     <>
       <div className="mb-2">
@@ -261,17 +281,28 @@ function TextControls({ params, onPatch }: { params: TextParams; onPatch: Patch 
           onChange={(e) => onPatch({ content: e.target.value })}
         />
       </div>
-      <SegControl
-        name="font"
-        value={params.font}
-        options={[
-          { value: "mondwest", label: "mondwest" },
-          { value: "neue-bit", label: "neue bit" },
-          { value: "geist-pixel", label: "pixel" },
-          { value: "sans", label: "sans" },
-        ]}
-        onChange={(v) => onPatch({ font: v })}
-      />
+      <div className="mb-3">
+        <span className="mb-1.5 block text-xs tracking-wider text-muted-foreground uppercase">
+          font
+        </span>
+        <Select value={params.font} onValueChange={(v) => onPatch({ font: v })}>
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder="pick a font" />
+          </SelectTrigger>
+          <SelectContent>
+            {fonts.map((f) => (
+              <SelectItem key={f.family} value={f.family}>
+                <span style={{ fontFamily: `"${f.family}", system-ui` }}>
+                  {f.family}
+                </span>
+                {f.source === "local" && (
+                  <span className="ml-2 text-[10px] text-muted-foreground">local</span>
+                )}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
       <SliderControl name="size" min={6} max={800} value={params.size} unit="px" onChange={(v) => onPatch({ size: v })} />
       <SliderControl name="letter spacing" min={-20} max={60} value={params.letterSpacing} onChange={(v) => onPatch({ letterSpacing: v })} />
       <SegControl
@@ -756,6 +787,56 @@ export function PaletteEditor({
         )}
       </div>
     </div>
+  );
+}
+
+export function FontsSection() {
+  const fonts = useFontList();
+  const [status, setStatus] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const supported =
+    typeof window !== "undefined" && "queryLocalFonts" in window;
+
+  const loadLocal = async () => {
+    setBusy(true);
+    setStatus(null);
+    try {
+      const added = await loadLocalFonts();
+      setStatus(added === 0 ? "no new fonts" : `+ ${added} fonts`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setStatus(msg.includes("denied") ? "permission denied" : `failed: ${msg}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const localCount = fonts.filter((f) => f.source === "local").length;
+
+  return (
+    <>
+      {supported ? (
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full justify-between"
+          onClick={loadLocal}
+          disabled={busy}
+        >
+          <span className="lowercase">
+            {localCount > 0 ? `${localCount} local fonts loaded` : "use local fonts"}
+          </span>
+          <span className="text-muted-foreground">{busy ? "…" : "→"}</span>
+        </Button>
+      ) : (
+        <p className="text-[11px] italic text-muted-foreground">
+          local fonts API not supported in this browser
+        </p>
+      )}
+      {status && (
+        <p className="mt-1 text-[11px] text-muted-foreground">{status}</p>
+      )}
+    </>
   );
 }
 

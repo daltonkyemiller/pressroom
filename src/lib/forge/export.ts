@@ -10,12 +10,9 @@ import {
 } from "./engine";
 import type { Doc, Node, Primitive } from "./types";
 
-const FONT_FAMILIES: Record<string, string> = {
-  mondwest: '"Mondwest", serif',
-  "geist-pixel": '"Geist Pixel", monospace',
-  "neue-bit": '"Neue Bit", monospace',
-  sans: "system-ui, sans-serif",
-};
+function cssFontFamily(family: string): string {
+  return `"${family.replace(/"/g, '\\"')}", system-ui, sans-serif`;
+}
 
 function escapeAttr(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
@@ -48,7 +45,7 @@ function primitiveSvg(primitive: Primitive): string {
       return `<path d="${polygonPath(primitive.params)}" />`;
     case "text": {
       const p = primitive.params;
-      const ff = FONT_FAMILIES[p.font] ?? FONT_FAMILIES.sans;
+      const ff = cssFontFamily(p.font);
       const transform = p.rotation
         ? ` transform="rotate(${p.rotation} ${p.cx} ${p.cy})"`
         : "";

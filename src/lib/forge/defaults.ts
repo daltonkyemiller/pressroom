@@ -139,7 +139,7 @@ export function makePrimitive(kind: PrimitiveKind): Primitive {
           cy: CENTER,
           content: "FORGE",
           size: 120,
-          font: "mondwest",
+          font: "Mondwest",
           anchor: "middle",
           baseline: "middle",
           rotation: 0,

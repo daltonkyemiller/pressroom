@@ -314,7 +314,12 @@ function seedInstances(
   if (node.kind === "group") {
     if (!node.enabled) return [];
     const out: Instance[] = [];
-    for (const child of node.children) {
+    // Walk children back-to-front so the FIRST child (top of the group in
+    // the sidebar) paints LAST and ends up visually in front — matches the
+    // top-level "nodes[0] = front" convention. The top-level render in
+    // DocSvg / docToSvgString reverses doc.nodes for the same reason.
+    for (let i = node.children.length - 1; i >= 0; i--) {
+      const child = node.children[i];
       if (!child.enabled) continue;
       const expanded = expandNode(child, allNodes);
       // Collect the child's clipPath definitions so the group's render emits

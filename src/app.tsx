@@ -42,6 +42,7 @@ const EFFECT_KINDS: EffectKind[] = [
   "duotone",
   "displace",
   "chromatic",
+  "edgeBleed",
   "invert",
   "noise",
   "grain",

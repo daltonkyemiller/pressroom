@@ -30,6 +30,7 @@ export type EffectKind =
   | "grain"
   | "displace"
   | "chromatic"
+  | "edgeBleed"
   | "duotone";
 
 export type BlurParams = { radius: number };
@@ -68,12 +69,20 @@ export type InvertParams = Record<string, never>;
 export type NoiseParams = { amount: number };
 export type DisplaceParams = {
   amount: number; // max pixel offset
-  scale: number; // 1..200 — noise feature size in px (large = wavy, small = grainy)
+  scale: number; // 1..200 — noise cell size in px (small = grainy/inky, large = wavy/watercolor)
   octaves: number; // 1..4 — number of overlaid noise frequencies for richness
   seed: number;
   // 0..100 — interpolates between the original and the displaced output.
   // Useful for "subtle bleed at edges" without softening the whole image.
   strength: number;
+};
+export type EdgeBleedParams = {
+  amount: number; // px — how far dark/light spreads into its opposite
+  polarity: "spread-dark" | "spread-light"; // spread-dark = dilate dark areas (ink bleeding into paper); spread-light = erode dark (paper eating ink)
+  jitter: number; // 0..100 — per-pixel noise modulates the coverage, so the bleed is uneven instead of a uniform halo
+  scale: number; // noise feature size for the jitter
+  seed: number;
+  strength: number; // 0..100 — blend with the original
 };
 export type ChromaticParams = {
   amount: number; // px shift
@@ -93,6 +102,7 @@ export type ParamsByKind = {
   grain: GrainParams;
   displace: DisplaceParams;
   chromatic: ChromaticParams;
+  edgeBleed: EdgeBleedParams;
   duotone: DuotoneParams;
 };
 
@@ -134,8 +144,16 @@ export const EFFECT_DEFAULTS: { [K in EffectKind]: ParamsByKind[K] } = {
   invert: {},
   noise: { amount: 20 },
   grain: GRAIN_DEFAULTS,
-  displace: { amount: 6, scale: 32, octaves: 2, seed: 1, strength: 100 },
+  displace: { amount: 3, scale: 8, octaves: 2, seed: 1, strength: 100 },
   chromatic: { amount: 3, angle: 0, mode: "linear" },
+  edgeBleed: {
+    amount: 3,
+    polarity: "spread-dark",
+    jitter: 60,
+    scale: 10,
+    seed: 1,
+    strength: 100,
+  },
   duotone: DUOTONE_DEFAULTS,
 };
 
@@ -151,6 +169,7 @@ export const EFFECT_LABELS: Record<EffectKind, string> = {
   grain: "Grain",
   displace: "Displace",
   chromatic: "Chromatic shift",
+  edgeBleed: "Edge bleed",
   duotone: "Duotone dashes",
 };
 
@@ -166,6 +185,7 @@ export const EFFECT_DESCRIPTIONS: Record<EffectKind, string> = {
   grain: "film · tonal response",
   displace: "noise warp · ink bleed",
   chromatic: "rgb shift · print",
+  edgeBleed: "ink spread · uneven",
   duotone: "shader · capsule grid",
 };
 
@@ -730,6 +750,116 @@ function applyChromatic(img: ImageData, p: ChromaticParams): ImageData {
   return img;
 }
 
+// ---------- EDGE BLEED ----------
+// Morphological dilation (or erosion) of the dark areas, with per-pixel
+// noise jittering the *coverage* of the spread so the bleed feels uneven
+// and organic rather than a clean halo. Separable min/max passes keep it
+// O(N·R) instead of O(N·R²).
+function minFilterSeparable(buf: Uint8ClampedArray, w: number, h: number, r: number, channels: 3 | 4 = 3) {
+  if (r < 1) return;
+  const tmp = new Uint8ClampedArray(buf.length);
+  // Horizontal pass into tmp
+  for (let y = 0; y < h; y++) {
+    for (let c = 0; c < channels; c++) {
+      for (let x = 0; x < w; x++) {
+        let m = 255;
+        const lo = Math.max(0, x - r);
+        const hi = Math.min(w - 1, x + r);
+        for (let xi = lo; xi <= hi; xi++) {
+          const v = buf[(y * w + xi) * 4 + c];
+          if (v < m) m = v;
+        }
+        tmp[(y * w + x) * 4 + c] = m;
+      }
+    }
+  }
+  // Vertical pass back into buf
+  for (let x = 0; x < w; x++) {
+    for (let c = 0; c < channels; c++) {
+      for (let y = 0; y < h; y++) {
+        let m = 255;
+        const lo = Math.max(0, y - r);
+        const hi = Math.min(h - 1, y + r);
+        for (let yi = lo; yi <= hi; yi++) {
+          const v = tmp[(yi * w + x) * 4 + c];
+          if (v < m) m = v;
+        }
+        buf[(y * w + x) * 4 + c] = m;
+      }
+    }
+  }
+}
+
+function maxFilterSeparable(buf: Uint8ClampedArray, w: number, h: number, r: number, channels: 3 | 4 = 3) {
+  if (r < 1) return;
+  const tmp = new Uint8ClampedArray(buf.length);
+  for (let y = 0; y < h; y++) {
+    for (let c = 0; c < channels; c++) {
+      for (let x = 0; x < w; x++) {
+        let m = 0;
+        const lo = Math.max(0, x - r);
+        const hi = Math.min(w - 1, x + r);
+        for (let xi = lo; xi <= hi; xi++) {
+          const v = buf[(y * w + xi) * 4 + c];
+          if (v > m) m = v;
+        }
+        tmp[(y * w + x) * 4 + c] = m;
+      }
+    }
+  }
+  for (let x = 0; x < w; x++) {
+    for (let c = 0; c < channels; c++) {
+      for (let y = 0; y < h; y++) {
+        let m = 0;
+        const lo = Math.max(0, y - r);
+        const hi = Math.min(h - 1, y + r);
+        for (let yi = lo; yi <= hi; yi++) {
+          const v = tmp[(yi * w + x) * 4 + c];
+          if (v > m) m = v;
+        }
+        buf[(y * w + x) * 4 + c] = m;
+      }
+    }
+  }
+}
+
+function applyEdgeBleed(img: ImageData, p: EdgeBleedParams): ImageData {
+  const r = Math.round(p.amount);
+  if (r < 1 || p.strength <= 0) return img;
+  const w = img.width;
+  const h = img.height;
+  const src = new Uint8ClampedArray(img.data);
+  const spread = new Uint8ClampedArray(img.data);
+  if (p.polarity === "spread-dark") {
+    minFilterSeparable(spread, w, h, r);
+  } else {
+    maxFilterSeparable(spread, w, h, r);
+  }
+  // Coverage map: 1 = full spread everywhere; jitter reduces coverage in
+  // some regions so the bleed is uneven instead of a clean halo. Single
+  // octave is plenty — we want low-frequency mottled coverage, not a
+  // shimmering pattern.
+  const noise = p.jitter > 0 ? buildNoiseField(w, h, p.scale, 1, p.seed, 0) : null;
+  const mix = p.strength / 100;
+  const dst = img.data;
+  for (let i = 0; i < dst.length; i += 4) {
+    let coverage = 1;
+    if (noise) {
+      // noise is roughly [-1, 1]; remap to [0, 1] and weight by jitter%.
+      const n = noise[i >> 2] * 0.5 + 0.5;
+      coverage = 1 - (1 - n) * (p.jitter / 100);
+      if (coverage < 0) coverage = 0;
+      else if (coverage > 1) coverage = 1;
+    }
+    for (let c = 0; c < 3; c++) {
+      const orig = src[i + c];
+      const blended = orig + (spread[i + c] - orig) * coverage;
+      dst[i + c] = orig + (blended - orig) * mix;
+    }
+  }
+  return img;
+}
+
 export function applyLayer(img: ImageData, layer: Layer): ImageData {
   switch (layer.kind) {
     case "blur":
@@ -754,6 +884,8 @@ export function applyLayer(img: ImageData, layer: Layer): ImageData {
       return applyDisplace(img, layer.params);
     case "chromatic":
       return applyChromatic(img, layer.params);
+    case "edgeBleed":
+      return applyEdgeBleed(img, layer.params);
     case "duotone":
       return applyDuotoneShader(img, layer.params);
   }
@@ -842,6 +974,10 @@ export function summarizeLayer(layer: Layer): string {
     case "chromatic": {
       const p = layer.params;
       return `${p.amount}px · ${p.mode === "radial" ? "radial" : `${p.angle}°`}`;
+    }
+    case "edgeBleed": {
+      const p = layer.params;
+      return `${p.amount}px · ${p.polarity === "spread-dark" ? "dark→" : "light→"} · j${p.jitter}`;
     }
     case "duotone": {
       const p = layer.params;

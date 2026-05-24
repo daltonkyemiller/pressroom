@@ -2,6 +2,8 @@ import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { IconChevronRight, IconEye, IconEyeSlash, IconGripDotsVertical, IconXmark } from "nucleo-pixel";
 import { draggable, dropTargetForElements } from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
 import { combine } from "@atlaskit/pragmatic-drag-and-drop/combine";
+import { setCustomNativeDragPreview } from "@atlaskit/pragmatic-drag-and-drop/element/set-custom-native-drag-preview";
+import { pointerOutsideOfPreview } from "@atlaskit/pragmatic-drag-and-drop/element/pointer-outside-of-preview";
 import {
   attachClosestEdge,
   extractClosestEdge,
@@ -58,6 +60,35 @@ export function LayerCard({
         element: card,
         dragHandle: grip,
         getInitialData: () => ({ type: LAYER_DRAG_TYPE, id: layer.id }),
+        // Native drag image defaults to a snapshot of `element`, which here
+        // is the whole card INCLUDING the expanded params body. With params
+        // open the ghost balloons to several hundred pixels and floats off
+        // from the cursor. Replace it with a compact pill carrying just
+        // the layer's label.
+        onGenerateDragPreview: ({ nativeSetDragImage }) => {
+          setCustomNativeDragPreview({
+            nativeSetDragImage,
+            getOffset: pointerOutsideOfPreview({ x: "12px", y: "8px" }),
+            render: ({ container }) => {
+              const el = document.createElement("div");
+              el.style.cssText = [
+                "padding: 6px 10px",
+                "background: var(--background)",
+                "color: var(--foreground)",
+                "border: 1px solid var(--foreground)",
+                "font-family: inherit",
+                "font-size: 12px",
+                "letter-spacing: 0.05em",
+                "text-transform: uppercase",
+                "white-space: nowrap",
+                "box-shadow: 0 4px 12px rgba(0,0,0,0.25)",
+              ].join(";");
+              el.textContent = EFFECT_LABELS[layer.kind];
+              container.appendChild(el);
+              return () => {};
+            },
+          });
+        },
         onDragStart: () => setIsDragging(true),
         onDrop: () => setIsDragging(false),
       }),
@@ -90,7 +121,7 @@ export function LayerCard({
         },
       }),
     );
-  }, [layer.id, onReorder]);
+  }, [layer.id, layer.kind, onReorder]);
 
   return (
     <div
@@ -770,6 +801,16 @@ function LayerBody({
             onStart={onStart}
             onCommit={onCommit}
             onChange={(v) => onPatch({ scale: v })}
+          />
+          <SliderControl
+            name="feather"
+            min={0}
+            max={20}
+            value={p.feather}
+            unit="px"
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ feather: v })}
           />
           <SliderControl
             name="strength"

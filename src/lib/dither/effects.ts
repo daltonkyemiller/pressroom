@@ -81,6 +81,10 @@ export type EdgeBleedParams = {
   polarity: "spread-dark" | "spread-light"; // spread-dark = dilate dark areas (ink bleeding into paper); spread-light = erode dark (paper eating ink)
   jitter: number; // 0..100 — per-pixel noise modulates the coverage, so the bleed is uneven instead of a uniform halo
   scale: number; // noise feature size for the jitter
+  // Blurs the spread buffer by `feather` px after the morphological pass,
+  // so the outer boundary of the bleed fades softly into the original
+  // instead of being a hard halo edge. 0 = old hard look.
+  feather: number;
   seed: number;
   strength: number; // 0..100 — blend with the original
 };
@@ -151,6 +155,7 @@ export const EFFECT_DEFAULTS: { [K in EffectKind]: ParamsByKind[K] } = {
     polarity: "spread-dark",
     jitter: 60,
     scale: 10,
+    feather: 2,
     seed: 1,
     strength: 100,
   },
@@ -835,6 +840,11 @@ function applyEdgeBleed(img: ImageData, p: EdgeBleedParams): ImageData {
   } else {
     maxFilterSeparable(spread, w, h, r);
   }
+  // Feather: soften the hard halo by blurring the spread buffer. Blur of
+  // the uniform interior is a no-op; blur of the boundary fades the edge
+  // gradient — exactly the "ink soaking into paper edge" look.
+  const fr = Math.round(p.feather);
+  if (fr > 0) boxBlur(spread, w, h, fr);
   // Coverage map: 1 = full spread everywhere; jitter reduces coverage in
   // some regions so the bleed is uneven instead of a clean halo. Single
   // octave is plenty — we want low-frequency mottled coverage, not a

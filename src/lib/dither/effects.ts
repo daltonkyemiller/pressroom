@@ -64,6 +64,7 @@ export type DitherParams = {
   diffusion: number; // 0..200 % — scales error diffusion (error-diffusion algos)
   matrixScale: number; // 16..128 — Bayer matrix amplitude
   jitter: number; // 0..100 — per-pixel deterministic random offset
+  inkColor: string; // hex — ink shade when preserveColors is on
 };
 export type InvertParams = Record<string, never>;
 export type NoiseParams = { amount: number };
@@ -144,6 +145,7 @@ export const EFFECT_DEFAULTS: { [K in EffectKind]: ParamsByKind[K] } = {
     diffusion: 100,
     matrixScale: 64,
     jitter: 0,
+    inkColor: "#000000",
   },
   invert: {},
   noise: { amount: 20 },
@@ -295,6 +297,13 @@ function applyColor(img: ImageData, p: ColorParams): ImageData {
   return img;
 }
 
+function hexToRgb255(hex: string): [number, number, number] {
+  const clean = (hex || "").replace("#", "");
+  const full = clean.length === 3 ? clean.replace(/(.)/g, "$1$1") : clean;
+  const n = Number.parseInt(full || "0", 16);
+  return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
+}
+
 // ---------- HALFTONE ----------
 function applyHalftone(img: ImageData, p: HalftoneParams): ImageData {
   const w = img.width;
@@ -441,18 +450,11 @@ function applyDither(img: ImageData, p: DitherParams): ImageData {
   // so the palette picker still controls the ink shade.
   const bwPalette = PALETTES.bw;
   const palette = p.preserveColors ? bwPalette : userPalette;
-  let darkest = userPalette[0];
+  let darkest: readonly [number, number, number] = userPalette[0];
   let original: Uint8ClampedArray | null = null;
   if (p.preserveColors) {
     original = new Uint8ClampedArray(data);
-    let dL = 256;
-    for (const c of userPalette) {
-      const L = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
-      if (L < dL) {
-        dL = L;
-        darkest = c;
-      }
-    }
+    darkest = hexToRgb255(p.inkColor ?? "#000000");
   }
 
   // Cheap deterministic per-pixel hash → ±jitterAmp in 0..255 space.

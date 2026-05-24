@@ -529,6 +529,13 @@ function LayerBody({
             value={p.preserveColors}
             onChange={(v) => onPatch({ preserveColors: v })}
           />
+          {p.preserveColors && (
+            <ColorControl
+              name="ink color"
+              value={p.inkColor}
+              onChange={(v) => onPatch({ inkColor: v })}
+            />
+          )}
         </>
       );
     }

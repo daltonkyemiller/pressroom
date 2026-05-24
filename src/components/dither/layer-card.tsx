@@ -525,6 +525,11 @@ function LayerBody({
             onChange={(v) => onPatch({ serpentine: v })}
           />
           <ToggleControl
+            name="preserve transparency"
+            value={p.preserveTransparency}
+            onChange={(v) => onPatch({ preserveTransparency: v })}
+          />
+          <ToggleControl
             name="preserve colors"
             value={p.preserveColors}
             onChange={(v) => onPatch({ preserveColors: v })}

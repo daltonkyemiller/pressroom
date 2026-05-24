@@ -65,6 +65,7 @@ export type DitherParams = {
   matrixScale: number; // 16..128 — Bayer matrix amplitude
   jitter: number; // 0..100 — per-pixel deterministic random offset
   inkColor: string; // hex — ink shade when preserveColors is on
+  preserveTransparency: boolean; // skip alpha=0 pixels: no quantize, no error diffusion in/out
 };
 export type InvertParams = Record<string, never>;
 export type NoiseParams = { amount: number };
@@ -146,6 +147,7 @@ export const EFFECT_DEFAULTS: { [K in EffectKind]: ParamsByKind[K] } = {
     matrixScale: 64,
     jitter: 0,
     inkColor: "#000000",
+    preserveTransparency: false,
   },
   invert: {},
   noise: { amount: 20 },
@@ -436,6 +438,11 @@ function applyDither(img: ImageData, p: DitherParams): ImageData {
   const data = img.data;
   const userPalette = PALETTES[p.palette];
   const algo = p.algo;
+  const skipAlpha = p.preserveTransparency;
+
+  // Snapshot of original RGBA before pre-blur. Used at the end to restore
+  // alpha=0 pixels so they're byte-identical to the input.
+  const origRGBA = skipAlpha ? new Uint8ClampedArray(data) : null;
 
   // Snapshot for the strength-blend at the very end (when < 100).
   const blendMix = Math.max(0, Math.min(1, p.strength / 100));
@@ -490,6 +497,7 @@ function applyDither(img: ImageData, p: DitherParams): ImageData {
       const xEnd = reverse ? -1 : w;
       const xStep = reverse ? -1 : 1;
       for (let x = xStart; x !== xEnd; x += xStep) {
+        if (skipAlpha && data[(y * w + x) * 4 + 3] === 0) continue;
         const idx = (y * w + x) * 3;
         const j = jitterAt(x, y);
         const r = buf[idx] + j;
@@ -508,6 +516,7 @@ function applyDither(img: ImageData, p: DitherParams): ImageData {
           const ax = reverse ? x - dx : x + dx;
           const ay = y + dy;
           if (ax < 0 || ax >= w || ay >= h) continue;
+          if (skipAlpha && data[(ay * w + ax) * 4 + 3] === 0) continue;
           const aidx = (ay * w + ax) * 3;
           const f = kf[k];
           buf[aidx] += er * f;
@@ -528,6 +537,7 @@ function applyDither(img: ImageData, p: DitherParams): ImageData {
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         const idx = (y * w + x) * 4;
+        if (skipAlpha && data[idx + 3] === 0) continue;
         const t = matrix[y % N][x % N] * strength + jitterAt(x, y);
         const [nr, ng, nb] = nearestColor(
           data[idx] + t,
@@ -544,6 +554,7 @@ function applyDither(img: ImageData, p: DitherParams): ImageData {
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         const i = (y * w + x) * 4;
+        if (skipAlpha && data[i + 3] === 0) continue;
         const j = jitterAt(x, y);
         const [nr, ng, nb] = nearestColor(data[i] + j, data[i + 1] + j, data[i + 2] + j, palette);
         data[i] = nr;
@@ -556,6 +567,7 @@ function applyDither(img: ImageData, p: DitherParams): ImageData {
   if (original) {
     // Post-process: white in the binary result → original color; black → darkest palette ink.
     for (let i = 0; i < data.length; i += 4) {
+      if (skipAlpha && original[i + 3] === 0) continue;
       if (data[i] > 127) {
         data[i] = original[i];
         data[i + 1] = original[i + 1];
@@ -575,6 +587,18 @@ function applyDither(img: ImageData, p: DitherParams): ImageData {
       data[i] = preStrength[i] + (data[i] - preStrength[i]) * blendMix;
       data[i + 1] = preStrength[i + 1] + (data[i + 1] - preStrength[i + 1]) * blendMix;
       data[i + 2] = preStrength[i + 2] + (data[i + 2] - preStrength[i + 2]) * blendMix;
+    }
+  }
+
+  // Restore original RGB for fully-transparent pixels so the output is
+  // byte-identical to the input there (no ink baked under alpha=0).
+  if (origRGBA) {
+    for (let i = 0; i < data.length; i += 4) {
+      if (origRGBA[i + 3] === 0) {
+        data[i] = origRGBA[i];
+        data[i + 1] = origRGBA[i + 1];
+        data[i + 2] = origRGBA[i + 2];
+      }
     }
   }
   return img;

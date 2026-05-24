@@ -47,6 +47,7 @@ import {
   PRIMITIVE_LABELS,
   randomizeNode,
 } from "@/lib/forge/defaults";
+import { PREFABS, type Prefab } from "@/lib/forge/prefabs";
 import type {
   Doc,
   Modifier,
@@ -95,6 +96,20 @@ export default function ForgeApp() {
         const node = makeNode(kind, nextNodeId());
         setSelectedNodeId(node.id);
         // Prepend so new nodes appear at the top of the sidebar = visually in front.
+        return { ...d, nodes: [node, ...d.nodes] };
+      });
+    },
+    [setDoc],
+  );
+
+  const addPrefab = useCallback(
+    (prefab: Prefab) => {
+      setDoc((d) => {
+        const node = prefab.build({
+          docCenter: { x: d.width / 2, y: d.height / 2 },
+          palette: d.palette,
+        });
+        setSelectedNodeId(node.id);
         return { ...d, nodes: [node, ...d.nodes] };
       });
     },
@@ -482,15 +497,15 @@ export default function ForgeApp() {
               ))
             )}
           </div>
-          <div className="px-3.5 pb-3">
+          <div className="grid grid-cols-2 gap-1 px-3.5 pb-3">
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
                   <button
                     type="button"
-                    className="w-full border border-dashed border-border bg-transparent px-3 py-2.5 text-xs tracking-widest uppercase transition-colors hover:bg-foreground hover:text-background hover:border-solid"
+                    className="border border-dashed border-border bg-transparent px-2 py-2.5 text-xs tracking-widest uppercase transition-colors hover:bg-foreground hover:text-background hover:border-solid"
                   >
-                    + Add primitive
+                    + primitive
                   </button>
                 }
               />
@@ -502,6 +517,32 @@ export default function ForgeApp() {
                     className="lowercase"
                   >
                     {PRIMITIVE_LABELS[kind]}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <button
+                    type="button"
+                    className="border border-dashed border-border bg-transparent px-2 py-2.5 text-xs tracking-widest uppercase transition-colors hover:bg-foreground hover:text-background hover:border-solid"
+                  >
+                    + prefab
+                  </button>
+                }
+              />
+              <DropdownMenuContent align="start" side="top" className="w-[280px]">
+                {PREFABS.map((prefab) => (
+                  <DropdownMenuItem
+                    key={prefab.id}
+                    onClick={() => addPrefab(prefab)}
+                    className="flex items-baseline justify-between"
+                  >
+                    <span className="lowercase">{prefab.name}</span>
+                    <span className="font-mondwest text-sm text-muted-foreground">
+                      {prefab.description}
+                    </span>
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuContent>

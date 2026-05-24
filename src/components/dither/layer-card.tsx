@@ -379,6 +379,24 @@ function LayerBody({
             onCommit={onCommit}
             onChange={(v) => onPatch({ saturation: v })}
           />
+          <SliderControl
+            name="temperature"
+            min={-100}
+            max={100}
+            value={p.temperature}
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ temperature: v })}
+          />
+          <SliderControl
+            name="tint"
+            min={-100}
+            max={100}
+            value={p.tint}
+            onStart={onStart}
+            onCommit={onCommit}
+            onChange={(v) => onPatch({ tint: v })}
+          />
         </>
       );
     }

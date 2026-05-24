@@ -1,5 +1,5 @@
 allowBuilds:
-  msw: false
+  msw: true
   nucleo-pixel: true
 
 # Mirrors CI's supply-chain policy so local installs reject packages

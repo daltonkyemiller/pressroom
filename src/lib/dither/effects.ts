@@ -35,7 +35,18 @@ export type EffectKind =
   | "duotone";
 
 export type BlurParams = { radius: number };
-export type ColorParams = { contrast: number; brightness: number; gamma: number; saturation: number };
+export type ColorParams = {
+  contrast: number;
+  brightness: number;
+  gamma: number;
+  saturation: number;
+  // Warm/cool axis (-100..+100). Positive = warm (boost R, drop B);
+  // negative = cool (drop R, boost B). At ±100 each channel shifts by ±50.
+  temperature: number;
+  // Magenta/green axis (-100..+100). Positive = magenta (boost R+B, drop G);
+  // negative = green (drop R+B, boost G).
+  tint: number;
+};
 export type HalftoneShape = "dot" | "line" | "cross" | "square";
 export type HalftoneParams = {
   size: number;
@@ -156,7 +167,7 @@ export type Layer = {
 export const EFFECT_DEFAULTS: { [K in EffectKind]: ParamsByKind[K] } = {
   blur: { radius: 2 },
   progressiveBlur: PROGRESSIVE_BLUR_DEFAULTS,
-  color: { contrast: 0, brightness: 0, gamma: 1, saturation: 100 },
+  color: { contrast: 0, brightness: 0, gamma: 1, saturation: 100, temperature: 0, tint: 0 },
   curves: CURVES_DEFAULTS,
   halftone: {
     size: 8,
@@ -333,6 +344,12 @@ function applyColor(img: ImageData, p: ColorParams): ImageData {
   const b = p.brightness;
   const g = p.gamma;
   const s = p.saturation / 100;
+  // Each color-balance axis maxes at ±50 channel units at ±100 on the
+  // slider. Temperature pushes R one way and B the other; tint pushes G
+  // against the average of R and B. These run BEFORE saturation so a
+  // saturation knob still pulls toward grey of the warmed/tinted balance.
+  const tempShift = (p.temperature / 100) * 50;
+  const tintShift = (p.tint / 100) * 50;
   for (let i = 0; i < data.length; i += 4) {
     let r = data[i];
     let gr = data[i + 1];
@@ -343,6 +360,14 @@ function applyColor(img: ImageData, p: ColorParams): ImageData {
     r = 255 * Math.pow(Math.max(0, r) / 255, 1 / g);
     gr = 255 * Math.pow(Math.max(0, gr) / 255, 1 / g);
     bl = 255 * Math.pow(Math.max(0, bl) / 255, 1 / g);
+    // Temperature: warm (+) lifts R, drops B. Cool (-) does the opposite.
+    r += tempShift;
+    bl -= tempShift;
+    // Tint: magenta (+) lifts R+B (purple direction), drops G. Green (-)
+    // reverses.
+    r += tintShift * 0.5;
+    bl += tintShift * 0.5;
+    gr -= tintShift;
     if (s !== 1) {
       const L = 0.2126 * r + 0.7152 * gr + 0.0722 * bl;
       r = L + (r - L) * s;

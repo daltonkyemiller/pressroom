@@ -1,7 +1,14 @@
 // SVG + PNG export. SVG is built as a string (faster + no SSR dep than
 // react-dom/server). PNG rasterizes the SVG via a Blob URL onto a canvas.
 
-import { barStackBars, expandNode, polygonPath, wedgePath, type ClipDef } from "./engine";
+import {
+  barStackBars,
+  expandNode,
+  getBooleanHiddenIds,
+  polygonPath,
+  wedgePath,
+  type ClipDef,
+} from "./engine";
 import type { Doc, Node, Primitive } from "./types";
 
 const FONT_FAMILIES: Record<string, string> = {
@@ -106,15 +113,19 @@ function grainSvg(doc: Doc): string {
 }
 
 export function docToSvgString(doc: Doc): string {
+  const hidden = getBooleanHiddenIds(doc.nodes);
   // Render in reverse so nodes[0] (top of sidebar) is painted last and ends
   // up visually in front — matches Figma/Photoshop layer ordering.
   const nodes = [...doc.nodes]
     .reverse()
-    .filter((n) => n.enabled)
+    .filter((n) => n.enabled && !hidden.has(n.id))
     .map((n) => nodeSvg(n, doc.nodes))
     .join("");
+  const bg = doc.backgroundEnabled
+    ? `<rect x="0" y="0" width="${doc.width}" height="${doc.height}" fill="${escapeAttr(doc.background)}" />`
+    : "";
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${doc.width} ${doc.height}" width="${doc.width}" height="${doc.height}"><rect x="0" y="0" width="${doc.width}" height="${doc.height}" fill="${escapeAttr(doc.background)}" />${nodes}${grainSvg(doc)}</svg>`;
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${doc.width} ${doc.height}" width="${doc.width}" height="${doc.height}">${bg}${nodes}${grainSvg(doc)}</svg>`;
 }
 
 export function downloadSvg(doc: Doc, filename: string): void {

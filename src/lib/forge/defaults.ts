@@ -245,7 +245,7 @@ export function makeModifier(
         id,
         kind,
         enabled: true,
-        params: { op: "subtract", targetNodeId: null },
+        params: { op: "subtract", targetNodeId: null, hideTarget: true },
       };
   }
 }
@@ -402,6 +402,7 @@ export function makeDefaultDoc(): Doc {
     width: DEFAULT_W,
     height: DEFAULT_H,
     background: "#1a1a1a",
+    backgroundEnabled: true,
     palette: [...DEFAULT_PALETTE],
     grain: { ...DEFAULT_GRAIN },
     nodes: [

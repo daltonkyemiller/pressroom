@@ -28,7 +28,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ColorControl, SliderControl } from "@/components/dither/controls";
+import { ColorControl, SliderControl, ToggleControl } from "@/components/dither/controls";
 import { cn } from "@/lib/utils";
 import { DocSvg } from "@/lib/forge/render";
 import { getPrimitiveCenter } from "@/lib/forge/engine";
@@ -658,11 +658,18 @@ function DocSection({
         unit="px"
         onChange={(v) => onPatch({ height: v })}
       />
-      <ColorControl
+      <ToggleControl
         name="background"
-        value={doc.background}
-        onChange={(v) => onPatch({ background: v })}
+        value={doc.backgroundEnabled}
+        onChange={(v) => onPatch({ backgroundEnabled: v })}
       />
+      {doc.backgroundEnabled && (
+        <ColorControl
+          name="bg color"
+          value={doc.background}
+          onChange={(v) => onPatch({ background: v })}
+        />
+      )}
       <PaletteEditor palette={doc.palette} onChange={(p) => onPatch({ palette: p })} />
       <details className="mt-2 [&_summary]:cursor-pointer">
         <summary className="text-xs tracking-wider text-muted-foreground uppercase mb-1">

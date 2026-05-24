@@ -108,6 +108,12 @@ export type ClipParams = {
 export type BooleanParams = {
   op: "union" | "subtract" | "intersect" | "exclude";
   targetNodeId: number | null; // when null, the modifier is a no-op
+  // When true (default), the target node is skipped during the doc render so
+  // its geometry only appears via the boolean result. Otherwise the target
+  // would draw on top of the boolean output and visually mask the effect —
+  // e.g. subtracting a small circle from a bigger one produces a ring, but
+  // the small circle redrawing on top fills the ring's hole right back in.
+  hideTarget: boolean;
 };
 
 export type Modifier =
@@ -150,6 +156,7 @@ export type Doc = {
   width: number;
   height: number;
   background: string;
+  backgroundEnabled: boolean; // when false, the doc is transparent (no background rect)
   palette: string[]; // shared color palette for the doc
   grain: GrainParams;
   nodes: Node[];

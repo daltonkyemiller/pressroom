@@ -430,6 +430,11 @@ function BooleanControls({
           </p>
         )}
       </div>
+      <ToggleControl
+        name="hide target node"
+        value={params.hideTarget}
+        onChange={(v) => onPatch({ hideTarget: v })}
+      />
     </>
   );
 }

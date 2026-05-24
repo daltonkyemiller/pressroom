@@ -1,5 +1,12 @@
 import { Fragment } from "react";
-import { barStackBars, expandNode, polygonPath, wedgePath, type ClipDef } from "./engine";
+import {
+  barStackBars,
+  expandNode,
+  getBooleanHiddenIds,
+  polygonPath,
+  wedgePath,
+  type ClipDef,
+} from "./engine";
 import type { Doc, Node, Primitive } from "./types";
 
 const FONT_FAMILIES: Record<string, string> = {
@@ -163,6 +170,8 @@ function GrainOverlay({ doc }: { doc: Doc }) {
   );
 }
 
+const CHECKER_PATTERN_ID = "forge-doc-transparent-checker";
+
 export function DocSvg({
   doc,
   selectedNodeId,
@@ -172,6 +181,7 @@ export function DocSvg({
   selectedNodeId?: number | null;
   onSelectNode?: (id: number | null) => void;
 }) {
+  const hidden = getBooleanHiddenIds(doc.nodes);
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -183,11 +193,35 @@ export function DocSvg({
         if (e.target === e.currentTarget) onSelectNode?.(null);
       }}
     >
-      <rect x={0} y={0} width={doc.width} height={doc.height} fill={doc.background} />
+      {/* Editor-only: a subtle checker pattern shows through when the doc
+          background is disabled, so transparency is visible. The pattern is
+          NEVER written to exports (see export.ts) — those produce a truly
+          transparent PNG / blank-background SVG. */}
+      {!doc.backgroundEnabled && (
+        <defs>
+          <pattern
+            id={CHECKER_PATTERN_ID}
+            width="20"
+            height="20"
+            patternUnits="userSpaceOnUse"
+          >
+            <rect width="20" height="20" fill="#2a2a2a" />
+            <rect width="10" height="10" fill="#1f1f1f" />
+            <rect x="10" y="10" width="10" height="10" fill="#1f1f1f" />
+          </pattern>
+        </defs>
+      )}
+      <rect
+        x={0}
+        y={0}
+        width={doc.width}
+        height={doc.height}
+        fill={doc.backgroundEnabled ? doc.background : `url(#${CHECKER_PATTERN_ID})`}
+      />
       {/* Reverse: nodes[0] is the top of the sidebar and should paint LAST so
           it appears in front, matching Figma/Photoshop layer conventions. */}
       {[...doc.nodes].reverse().map((node) =>
-        node.enabled ? (
+        node.enabled && !hidden.has(node.id) ? (
           <g
             key={node.id}
             onClick={(e) => {

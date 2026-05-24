@@ -151,6 +151,27 @@ function composeTransform(a: string, b: string): string {
   return a ? `${a} ${b}` : b;
 }
 
+// IDs of nodes that are consumed as the target of a boolean modifier with
+// hideTarget on — these should be skipped during the doc render so their
+// geometry only appears via the boolean result.
+export function getBooleanHiddenIds(nodes: readonly Node[]): Set<number> {
+  const hidden = new Set<number>();
+  for (const n of nodes) {
+    if (!n.enabled) continue;
+    for (const m of n.modifiers) {
+      if (
+        m.enabled &&
+        m.kind === "boolean" &&
+        m.params.hideTarget &&
+        m.params.targetNodeId != null
+      ) {
+        hidden.add(m.params.targetNodeId);
+      }
+    }
+  }
+  return hidden;
+}
+
 export function expandNode(node: Node, allNodes: readonly Node[] = []): Expanded {
   const pivot = getPrimitiveCenter(node.primitive);
   let instances: Instance[] = [{ transform: "" }];

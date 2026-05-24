@@ -4,18 +4,32 @@
 // modifiers). Render then emits one <g> per instance wrapping the base
 // primitive shape.
 
-import { computeBooleanPath, nodeToSvgFragment } from "./boolean";
-import type { BarStackParams, Modifier, Node, PolygonParams, Primitive } from "./types";
+import { computeBooleanPath, instancesToSvgFragment } from "./boolean";
+import type {
+  BarStackParams,
+  Modifier,
+  Node,
+  PolygonParams,
+  Primitive,
+  PrimitiveNode,
+} from "./types";
 
+// An Instance now carries a reference to the primitive being rendered AND
+// its resolved style. This lets a group's expansion produce a flat list of
+// instances drawn from MULTIPLE primitives (one per child), each keeping
+// its own fill/stroke. Modifiers operate on the flat list uniformly.
 export type Instance = {
+  primitive: Primitive;
   transform: string;
   clipPathId?: string;
-  // Per-instance style overrides (set by colorCycle and similar modifiers).
-  fill?: string;
-  stroke?: string;
-  opacity?: number;
+  // Resolved style — always set when seeded; modifiers (colorCycle) may
+  // override fill/stroke per-instance after the fact.
+  fill: string;
+  stroke: string;
+  strokeWidth: number;
+  opacity: number;
   // When set, this instance renders the supplied SVG path data instead of
-  // the node's primitive. Output of a boolean modifier.
+  // the primitive. Output of a boolean modifier.
   pathOverride?: string;
 };
 
@@ -47,13 +61,12 @@ export function hashSigned(seed: number, i: number): number {
   return hash(seed, i) * 2 - 1;
 }
 
-// Per-bar transforms for a barStack. The primitive renders as ONE base rect
-// (width × height, centered on cx, cy); each instance carries a translate +
-// non-uniform x-scale that positions/sizes a single bar. This makes
-// downstream modifiers (colorCycle, scatter, mirror, ...) see each bar as
-// its own instance instead of treating the stack as a single shape.
-export function barStackInstances(p: BarStackParams): Instance[] {
-  const out: Instance[] = [];
+// Per-bar transforms for a barStack. Returns partial seeds (just the
+// transform strings) so the caller can mix in style + primitive ref. The
+// primitive renders as ONE base rect; each transform positions/sizes a
+// single bar.
+export function barStackInstances(p: BarStackParams): Array<{ transform: string }> {
+  const out: Array<{ transform: string }> = [];
   const n = Math.max(1, Math.floor(p.count));
   const totalH = n * p.height + (n - 1) * p.gap;
   const topY = p.cy - totalH / 2;
@@ -245,42 +258,112 @@ function composeTransform(a: string, b: string): string {
 
 // IDs of nodes that are consumed as the target of a boolean modifier with
 // hideTarget on — these should be skipped during the doc render so their
-// geometry only appears via the boolean result.
+// geometry only appears via the boolean result. Walks groups recursively
+// so a boolean inside a nested group still hides its target.
 export function getBooleanHiddenIds(nodes: readonly Node[]): Set<number> {
   const hidden = new Set<number>();
-  for (const n of nodes) {
-    if (!n.enabled) continue;
-    for (const m of n.modifiers) {
-      if (
-        m.enabled &&
-        m.kind === "boolean" &&
-        m.params.hideTarget &&
-        m.params.targetNodeId != null
-      ) {
-        hidden.add(m.params.targetNodeId);
+  function walk(list: readonly Node[]) {
+    for (const n of list) {
+      if (!n.enabled) continue;
+      for (const m of n.modifiers) {
+        if (
+          m.enabled &&
+          m.kind === "boolean" &&
+          m.params.hideTarget &&
+          m.params.targetNodeId != null
+        ) {
+          hidden.add(m.params.targetNodeId);
+        }
       }
+      if (n.kind === "group") walk(n.children);
     }
   }
+  walk(nodes);
   return hidden;
 }
 
 export function expandNode(node: Node, allNodes: readonly Node[] = []): Expanded {
-  const pivot = getPrimitiveCenter(node.primitive);
-  // Start with the primitive's intrinsic instances. For most primitives
-  // that's a single identity-transform instance; barStack contributes N
-  // pre-positioned/scaled bars so modifiers see each bar individually.
-  let instances: Instance[] =
-    node.primitive.kind === "barStack"
-      ? barStackInstances(node.primitive.params)
-      : [{ transform: "" }];
   const clipDefs: ClipDef[] = [];
+  // Seed instances differ for primitive vs group: a primitive node seeds
+  // from its own primitive (with barStack contributing N intrinsic bars);
+  // a group seeds from the concatenation of its children's expansions.
+  let instances: Instance[] = seedInstances(node, allNodes, clipDefs);
+  const pivot = getNodePivot(node);
 
   for (const mod of node.modifiers) {
     if (!mod.enabled) continue;
     instances = applyModifier(instances, mod, clipDefs, node, allNodes, pivot);
   }
 
+  // Group opacity multiplies into each instance's opacity at the very end.
+  if (node.kind === "group" && node.opacity !== 1) {
+    instances = instances.map((inst) => ({
+      ...inst,
+      opacity: inst.opacity * node.opacity,
+    }));
+  }
+
   return { instances, clipDefs };
+}
+
+function seedInstances(
+  node: Node,
+  allNodes: readonly Node[],
+  clipDefs: ClipDef[],
+): Instance[] {
+  if (node.kind === "group") {
+    if (!node.enabled) return [];
+    const out: Instance[] = [];
+    for (const child of node.children) {
+      if (!child.enabled) continue;
+      const expanded = expandNode(child, allNodes);
+      // Collect the child's clipPath definitions so the group's render emits
+      // them all in one <defs>.
+      clipDefs.push(...expanded.clipDefs);
+      out.push(...expanded.instances);
+    }
+    return out;
+  }
+  // Primitive node — every instance carries the same primitive + style;
+  // colorCycle can override per-instance later.
+  return seedPrimitiveInstances(node);
+}
+
+function seedPrimitiveInstances(node: PrimitiveNode): Instance[] {
+  const baseStyle = {
+    fill: node.fillEnabled ? node.fill : "none",
+    stroke: node.strokeEnabled ? node.stroke : "none",
+    strokeWidth: node.strokeEnabled ? node.strokeWidth : 0,
+    opacity: node.opacity,
+  };
+  const seeds =
+    node.primitive.kind === "barStack"
+      ? barStackInstances(node.primitive.params)
+      : [{ transform: "" }];
+  return seeds.map((s) => ({
+    ...s,
+    ...baseStyle,
+    primitive: node.primitive,
+  }));
+}
+
+// Pivot point used by per-instance rotation/scale inside modifiers. For a
+// primitive node it's the primitive's visual center. For a group it's the
+// centroid of the children's pivots — gives a reasonable default for
+// "rotate the whole group around its visual middle".
+function getNodePivot(node: Node): { x: number; y: number } {
+  if (node.kind === "primitive") return getPrimitiveCenter(node.primitive);
+  if (node.children.length === 0) return { x: 0, y: 0 };
+  let x = 0;
+  let y = 0;
+  let n = 0;
+  for (const c of node.children) {
+    const p = getNodePivot(c);
+    x += p.x;
+    y += p.y;
+    n++;
+  }
+  return { x: x / n, y: y / n };
 }
 
 function applyModifier(
@@ -405,28 +488,28 @@ function applyModifier(
       if (!d) return instances;
       // The result is one merged path. Collapse instances to a single
       // identity-transform instance so subsequent modifiers (repeats,
-      // scatter, etc.) operate on the boolean output.
-      return [{ transform: "", pathOverride: d }];
+      // scatter, etc.) operate on the boolean output. Inherit style from
+      // the first existing instance so the merged path is drawn in the
+      // same fill the user picked for the originating node.
+      const first = instances[0];
+      return [
+        {
+          primitive: first?.primitive ?? (node.kind === "primitive" ? node.primitive : { kind: "rect", params: { cx: 0, cy: 0, w: 0, h: 0, rx: 0 } }),
+          transform: "",
+          fill: first?.fill ?? "#000000",
+          stroke: first?.stroke ?? "none",
+          strokeWidth: first?.strokeWidth ?? 0,
+          opacity: first?.opacity ?? 1,
+          pathOverride: d,
+        },
+      ];
     }
   }
 }
 
-// Build an SVG fragment that represents the given instances of a node.
-// Honors pathOverride so chained booleans work.
-function buildSvgForInstances(node: Node, instances: Instance[]): string {
-  // When any instance has a pathOverride, we emit those paths directly,
-  // ignoring the node's primitive. Mixed-mode shouldn't happen in practice
-  // (boolean collapses to one override instance), but be safe.
-  const hasOverride = instances.some((i) => i.pathOverride);
-  if (hasOverride) {
-    const tags = instances
-      .map((inst) => {
-        if (!inst.pathOverride) return "";
-        const t = inst.transform ? ` transform="${inst.transform.trim()}"` : "";
-        return `<g${t}><path d="${inst.pathOverride}" /></g>`;
-      })
-      .join("");
-    return `<svg xmlns="http://www.w3.org/2000/svg">${tags}</svg>`;
-  }
-  return nodeToSvgFragment(node, instances);
+// Build an SVG fragment that represents a list of instances. Each instance
+// carries its primitive (or pathOverride), so this works uniformly for
+// primitive nodes and group expansions.
+function buildSvgForInstances(_node: Node, instances: Instance[]): string {
+  return instancesToSvgFragment(instances);
 }

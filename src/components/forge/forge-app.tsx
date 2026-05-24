@@ -29,7 +29,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ColorControl, ToggleControl } from "@/components/dither/controls";
+import { ColorControl, SliderControl, ToggleControl } from "@/components/dither/controls";
 import { cn } from "@/lib/utils";
 import { DocSvg } from "@/lib/forge/render";
 import { getPrimitiveCenter } from "@/lib/forge/engine";
@@ -37,6 +37,7 @@ import { downloadPng, downloadSvg } from "@/lib/forge/export";
 import { useUndoableDoc } from "@/lib/forge/use-undoable-doc";
 import {
   makeDefaultDoc,
+  makeGroup,
   makeModifier,
   makeNode,
   MODIFIER_KINDS,
@@ -48,12 +49,21 @@ import {
   randomizeNode,
 } from "@/lib/forge/defaults";
 import { PREFABS, type Prefab } from "@/lib/forge/prefabs";
+import {
+  deepCloneWithFreshIds,
+  findNode,
+  insertSiblingAfter,
+  insertSiblingBefore,
+  mapNode,
+  removeNodeById,
+} from "@/lib/forge/tree";
 import type {
   Doc,
   Modifier,
   ModifierKind,
   Node,
   PrimitiveKind,
+  PrimitiveNode,
 } from "@/lib/forge/types";
 import {
   FontsSection,
@@ -83,7 +93,7 @@ export default function ForgeApp() {
   );
 
   const selectedNode = useMemo(
-    () => doc.nodes.find((n) => n.id === selectedNodeId) ?? null,
+    () => (selectedNodeId == null ? null : findNode(doc.nodes, selectedNodeId) ?? null),
     [doc.nodes, selectedNodeId],
   );
 
@@ -120,153 +130,63 @@ export default function ForgeApp() {
 
   const removeNode = useCallback(
     (id: number) => {
-      setDoc((d) => ({ ...d, nodes: d.nodes.filter((n) => n.id !== id) }));
+      setDoc((d) => ({ ...d, nodes: removeNodeById(d.nodes, id) }));
       setSelectedNodeId((curr) => (curr === id ? null : curr));
     },
-    [],
+    [setDoc],
   );
 
   const duplicateNode = useCallback(
     (id: number) => {
       setDoc((d) => {
-        const idx = d.nodes.findIndex((n) => n.id === id);
-        if (idx < 0) return d;
-        const src = d.nodes[idx];
-        const copy: Node = {
-          ...structuredClone(src),
-          id: nextNodeId(),
-          name: `${src.name} copy`,
-          modifiers: src.modifiers.map((m) => ({
-            ...structuredClone(m),
-            id: nextModId(),
-          })),
-        };
-        const nodes = [...d.nodes];
+        const src = findNode(d.nodes, id);
+        if (!src) return d;
+        const copy = deepCloneWithFreshIds(src, nextNodeId, nextModId);
+        copy.name = `${src.name} copy`;
         // Insert ABOVE the source so the copy ends up visually in front
-        // (since lower index = top of sidebar = front).
-        nodes.splice(idx, 0, copy);
+        // (works at the top level or inside a group).
+        const inserted = insertSiblingBefore(d.nodes, id, copy);
         setSelectedNodeId(copy.id);
-        return { ...d, nodes };
+        return { ...d, nodes: inserted };
       });
     },
     [setDoc],
   );
 
-  const toggleNode = useCallback((id: number) => {
-    setDoc((d) => ({
-      ...d,
-      nodes: d.nodes.map((n) => (n.id === id ? { ...n, enabled: !n.enabled } : n)),
-    }));
-  }, []);
-
-  const reorderNode = useCallback((fromId: number, toId: number, edge: Edge) => {
-    setDoc((d) => {
-      const fromIdx = d.nodes.findIndex((n) => n.id === fromId);
-      if (fromIdx < 0 || fromId === toId) return d;
-      const nodes = [...d.nodes];
-      const [moved] = nodes.splice(fromIdx, 1);
-      const toIdx = nodes.findIndex((n) => n.id === toId);
-      if (toIdx < 0) {
-        nodes.push(moved);
-      } else {
-        nodes.splice(edge === "top" ? toIdx : toIdx + 1, 0, moved);
-      }
-      return { ...d, nodes };
-    });
-  }, []);
-
-  const patchNode = useCallback((id: number, patch: Partial<Node>) => {
-    setDoc((d) => ({
-      ...d,
-      nodes: d.nodes.map((n) => (n.id === id ? { ...n, ...patch } : n)),
-    }));
-  }, []);
-
-  const patchPrimitiveParams = useCallback(
-    (id: number, paramsPatch: Record<string, unknown>) => {
+  const toggleNode = useCallback(
+    (id: number) => {
       setDoc((d) => ({
         ...d,
-        nodes: d.nodes.map((n) =>
-          n.id === id
-            ? {
-                ...n,
-                primitive: {
-                  ...n.primitive,
-                  params: { ...n.primitive.params, ...paramsPatch },
-                } as Node["primitive"],
-              }
-            : n,
-        ),
+        nodes: mapNode(d.nodes, id, (n) => ({ ...n, enabled: !n.enabled })),
       }));
     },
-    [],
+    [setDoc],
   );
 
-  // ---------- modifiers ----------
-  const addModifier = useCallback((nodeId: number, kind: ModifierKind) => {
-    setDoc((d) => ({
-      ...d,
-      nodes: d.nodes.map((n) =>
-        n.id === nodeId
-          ? {
-              ...n,
-              modifiers: [
-                ...n.modifiers,
-                makeModifier(kind, nextModId(), getPrimitiveCenter(n.primitive)),
-              ],
-            }
-          : n,
-      ),
-    }));
-  }, []);
-
-  const removeModifier = useCallback((nodeId: number, modId: number) => {
-    setDoc((d) => ({
-      ...d,
-      nodes: d.nodes.map((n) =>
-        n.id === nodeId ? { ...n, modifiers: n.modifiers.filter((m) => m.id !== modId) } : n,
-      ),
-    }));
-  }, []);
-
-  const duplicateModifier = useCallback((nodeId: number, modId: number) => {
-    setDoc((d) => ({
-      ...d,
-      nodes: d.nodes.map((n) => {
-        if (n.id !== nodeId) return n;
-        const idx = n.modifiers.findIndex((m) => m.id === modId);
-        if (idx < 0) return n;
-        const copy: Modifier = { ...structuredClone(n.modifiers[idx]), id: nextModId() };
-        const modifiers = [...n.modifiers];
-        modifiers.splice(idx + 1, 0, copy);
-        return { ...n, modifiers };
-      }),
-    }));
-  }, []);
-
-  const toggleModifier = useCallback((nodeId: number, modId: number) => {
-    setDoc((d) => ({
-      ...d,
-      nodes: d.nodes.map((n) =>
-        n.id === nodeId
-          ? {
-              ...n,
-              modifiers: n.modifiers.map((m) =>
-                m.id === modId ? { ...m, enabled: !m.enabled } : m,
-              ),
-            }
-          : n,
-      ),
-    }));
-  }, []);
+  const reorderNode = useCallback(
+    (fromId: number, toId: number, edge: Edge) => {
+      if (fromId === toId) return;
+      setDoc((d) => {
+        const moved = findNode(d.nodes, fromId);
+        if (!moved) return d;
+        const without = removeNodeById(d.nodes, fromId);
+        const placed =
+          edge === "top"
+            ? insertSiblingBefore(without, toId, moved)
+            : insertSiblingAfter(without, toId, moved);
+        if (placed === without) return d;
+        return { ...d, nodes: placed };
+      });
+    },
+    [setDoc],
+  );
 
   const reorderModifier = useCallback(
     (nodeId: number, fromId: number, toId: number, edge: Edge) => {
       if (fromId === toId) return;
       setDoc((d) => ({
         ...d,
-        nodes: d.nodes.map((n) => {
-          if (n.id !== nodeId) return n;
+        nodes: mapNode(d.nodes, nodeId, (n) => {
           const fromIdx = n.modifiers.findIndex((m) => m.id === fromId);
           if (fromIdx < 0) return n;
           const mods = [...n.modifiers];
@@ -277,33 +197,174 @@ export default function ForgeApp() {
           } else {
             mods.splice(edge === "top" ? toIdx : toIdx + 1, 0, moved);
           }
-          return { ...n, modifiers: mods };
+          return { ...n, modifiers: mods } as Node;
         }),
       }));
     },
-    [],
+    [setDoc],
   );
 
   const patchModifierParams = useCallback(
     (nodeId: number, modId: number, paramsPatch: Record<string, unknown>) => {
       setDoc((d) => ({
         ...d,
-        nodes: d.nodes.map((n) =>
-          n.id === nodeId
-            ? {
-                ...n,
-                modifiers: n.modifiers.map((m) =>
-                  m.id === modId
-                    ? ({ ...m, params: { ...m.params, ...paramsPatch } } as Modifier)
-                    : m,
-                ),
-              }
-            : n,
+        nodes: mapNode(d.nodes, nodeId, (n) => ({
+          ...n,
+          modifiers: n.modifiers.map((m) =>
+            m.id === modId
+              ? ({ ...m, params: { ...m.params, ...paramsPatch } } as Modifier)
+              : m,
+          ),
+        } as Node)),
+      }));
+    },
+    [setDoc],
+  );
+
+  // Wrap selected node in a new group. With multi-select we'd take many;
+  // for v1 it's the single selected node so the user can drop more into
+  // the new group via drag-and-drop afterwards.
+  const groupSelected = useCallback(() => {
+    if (selectedNodeId == null) return;
+    setDoc((d) => {
+      const target = findNode(d.nodes, selectedNodeId);
+      if (!target) return d;
+      const group = makeGroup(nextNodeId(), [target]);
+      const without = removeNodeById(d.nodes, selectedNodeId);
+      const placed = insertSiblingBefore(without, selectedNodeId, group);
+      // If the target was nested somewhere and removing then inserting
+      // didn't land (sibling already gone), prepend at top level.
+      const nodes = placed === without ? [group, ...without] : placed;
+      setSelectedNodeId(group.id);
+      return { ...d, nodes };
+    });
+  }, [selectedNodeId, setDoc]);
+
+  // Replace a group with its children (in place). Children retain their
+  // own modifiers; the group's modifiers are discarded.
+  const ungroupSelected = useCallback(() => {
+    if (selectedNodeId == null) return;
+    setDoc((d) => {
+      const target = findNode(d.nodes, selectedNodeId);
+      if (!target || target.kind !== "group") return d;
+      const without = removeNodeById(d.nodes, selectedNodeId);
+      // Splice children in where the group used to live.
+      let nodes: Node[] = without;
+      let anchor: number | null = null;
+      for (const c of target.children) {
+        if (anchor === null) {
+          nodes = [c, ...nodes];
+          anchor = c.id;
+        } else {
+          nodes = insertSiblingAfter(nodes, anchor, c);
+          anchor = c.id;
+        }
+      }
+      setSelectedNodeId(target.children[0]?.id ?? null);
+      return { ...d, nodes };
+    });
+  }, [selectedNodeId, setDoc]);
+
+  const patchNode = useCallback(
+    (id: number, patch: Partial<Node>) => {
+      setDoc((d) => ({
+        ...d,
+        nodes: mapNode(d.nodes, id, (n) => ({ ...n, ...patch } as Node)),
+      }));
+    },
+    [setDoc],
+  );
+
+  // Only valid on primitive nodes — groups don't have a primitive.
+  const patchPrimitiveParams = useCallback(
+    (id: number, paramsPatch: Record<string, unknown>) => {
+      setDoc((d) => ({
+        ...d,
+        nodes: mapNode(d.nodes, id, (n) => {
+          if (n.kind !== "primitive") return n;
+          return {
+            ...n,
+            primitive: {
+              ...n.primitive,
+              params: { ...n.primitive.params, ...paramsPatch },
+            },
+          } as Node;
+        }),
+      }));
+    },
+    [setDoc],
+  );
+
+  // ---------- modifiers ----------
+  const addModifier = useCallback(
+    (nodeId: number, kind: ModifierKind) => {
+      setDoc((d) => ({
+        ...d,
+        nodes: mapNode(d.nodes, nodeId, (n) => {
+          const center =
+            n.kind === "primitive"
+              ? getPrimitiveCenter(n.primitive)
+              : { x: d.width / 2, y: d.height / 2 };
+          return {
+            ...n,
+            modifiers: [...n.modifiers, makeModifier(kind, nextModId(), center)],
+          } as Node;
+        }),
+      }));
+    },
+    [setDoc],
+  );
+
+  const removeModifier = useCallback(
+    (nodeId: number, modId: number) => {
+      setDoc((d) => ({
+        ...d,
+        nodes: mapNode(
+          d.nodes,
+          nodeId,
+          (n) =>
+            ({ ...n, modifiers: n.modifiers.filter((m) => m.id !== modId) } as Node),
         ),
       }));
     },
-    [],
+    [setDoc],
   );
+
+  const duplicateModifier = useCallback(
+    (nodeId: number, modId: number) => {
+      setDoc((d) => ({
+        ...d,
+        nodes: mapNode(d.nodes, nodeId, (n) => {
+          const idx = n.modifiers.findIndex((m) => m.id === modId);
+          if (idx < 0) return n;
+          const copy: Modifier = {
+            ...structuredClone(n.modifiers[idx]),
+            id: nextModId(),
+          };
+          const modifiers = [...n.modifiers];
+          modifiers.splice(idx + 1, 0, copy);
+          return { ...n, modifiers } as Node;
+        }),
+      }));
+    },
+    [setDoc],
+  );
+
+  const toggleModifier = useCallback(
+    (nodeId: number, modId: number) => {
+      setDoc((d) => ({
+        ...d,
+        nodes: mapNode(d.nodes, nodeId, (n) => ({
+          ...n,
+          modifiers: n.modifiers.map((m) =>
+            m.id === modId ? { ...m, enabled: !m.enabled } : m,
+          ),
+        } as Node)),
+      }));
+    },
+    [setDoc],
+  );
+
 
   const resetDoc = useCallback(() => {
     if (!confirm("Reset to default document?")) return;
@@ -316,15 +377,14 @@ export default function ForgeApp() {
     if (selectedNodeId == null) return;
     setDoc((d) => ({
       ...d,
-      nodes: d.nodes.map((n) =>
-        n.id === selectedNodeId ? randomizeNode(n, d.palette) : n,
-      ),
+      nodes: mapNode(d.nodes, selectedNodeId, (n) => randomizeNode(n, d.palette)),
     }));
   }, [selectedNodeId, setDoc]);
 
-  // Snap the selected node's primitive center — and any centerable modifier
-  // params (radialRepeat / mirror / clip) — to the doc center. One-click
-  // recovery when sliders drift the composition off-center.
+  // Snap a node's center to doc center. For primitive nodes that means the
+  // primitive's (cx, cy); for groups we re-center the modifier params
+  // (radialRepeat / clip / mirror) but leave children alone — children
+  // have their own positions.
   const centerSelectedNode = useCallback(() => {
     if (selectedNodeId == null) return;
     setDoc((d) => {
@@ -332,26 +392,8 @@ export default function ForgeApp() {
       const docCy = d.height / 2;
       return {
         ...d,
-        nodes: d.nodes.map((n) => {
-          if (n.id !== selectedNodeId) return n;
-          // Re-anchor the primitive on doc center. Every primitive has a
-          // (cx, cy) pair (rect was converted) so this is uniform.
-          //
-          // Text has the extra wrinkle that (cx, cy) is the SVG anchor
-          // point, not necessarily the visual center — with anchor="start"
-          // baseline="alphabetic" the visual is offset from (cx, cy). When
-          // the user clicks "center" they mean "visually center", so also
-          // reset anchor + baseline to middle/middle.
-          const baseParams = { ...n.primitive.params, cx: docCx, cy: docCy };
-          const newPrim = (
-            n.primitive.kind === "text"
-              ? {
-                  ...n.primitive,
-                  params: { ...baseParams, anchor: "middle", baseline: "middle" },
-                }
-              : { ...n.primitive, params: baseParams }
-          ) as Node["primitive"];
-          // For modifiers that hold their own center, also re-anchor.
+        nodes: mapNode(d.nodes, selectedNodeId, (n) => {
+          // Re-anchor centerable modifier params for both kinds.
           const newMods = n.modifiers.map((m) => {
             if (m.kind === "radialRepeat" || m.kind === "clip") {
               return { ...m, params: { ...m.params, cx: docCx, cy: docCy } } as Modifier;
@@ -364,6 +406,17 @@ export default function ForgeApp() {
             }
             return m;
           });
+          if (n.kind === "group") return { ...n, modifiers: newMods };
+          // Primitive: also move the primitive itself.
+          const baseParams = { ...n.primitive.params, cx: docCx, cy: docCy };
+          const newPrim = (
+            n.primitive.kind === "text"
+              ? {
+                  ...n.primitive,
+                  params: { ...baseParams, anchor: "middle", baseline: "middle" },
+                }
+              : { ...n.primitive, params: baseParams }
+          ) as PrimitiveNode["primitive"];
           return { ...n, primitive: newPrim, modifiers: newMods };
         }),
       };
@@ -501,22 +554,18 @@ export default function ForgeApp() {
                 no nodes — add one below
               </div>
             ) : (
-              doc.nodes.map((node, idx) => (
-                <NodeRow
-                  key={node.id}
-                  node={node}
-                  index={idx}
-                  selected={selectedNodeId === node.id}
-                  onSelect={() => setSelectedNodeId(node.id)}
-                  onToggle={() => toggleNode(node.id)}
-                  onDuplicate={() => duplicateNode(node.id)}
-                  onRemove={() => removeNode(node.id)}
-                  onReorder={reorderNode}
-                />
-              ))
+              <NodeTree
+                nodes={doc.nodes}
+                selectedNodeId={selectedNodeId}
+                onSelect={setSelectedNodeId}
+                onToggle={toggleNode}
+                onDuplicate={duplicateNode}
+                onRemove={removeNode}
+                onReorder={reorderNode}
+              />
             )}
           </div>
-          <div className="grid grid-cols-2 gap-1 px-3.5 pb-3">
+          <div className="grid grid-cols-3 gap-1 px-3.5 pb-3">
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
@@ -566,6 +615,30 @@ export default function ForgeApp() {
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>
+            <button
+              type="button"
+              onClick={() => {
+                if (selectedNodeId != null) {
+                  // Wrap the selected node in a new group.
+                  groupSelected();
+                } else {
+                  // Nothing selected: create an empty group at the top.
+                  setDoc((d) => {
+                    const g = makeGroup(nextNodeId());
+                    setSelectedNodeId(g.id);
+                    return { ...d, nodes: [g, ...d.nodes] };
+                  });
+                }
+              }}
+              className="border border-dashed border-border bg-transparent px-2 py-2.5 text-xs tracking-widest uppercase transition-colors hover:bg-foreground hover:text-background hover:border-solid"
+              title={
+                selectedNodeId != null
+                  ? "wrap selection in a group"
+                  : "add empty group"
+              }
+            >
+              + group
+            </button>
           </div>
 
           {selectedNode && (
@@ -575,6 +648,7 @@ export default function ForgeApp() {
               nodes={doc.nodes}
               onRandomize={randomizeSelectedNode}
               onCenter={centerSelectedNode}
+              onUngroup={ungroupSelected}
               onPatchNode={(patch) => patchNode(selectedNode.id, patch)}
               onPatchPrimitive={(patch) => patchPrimitiveParams(selectedNode.id, patch)}
               onAddModifier={(k) => addModifier(selectedNode.id, k)}
@@ -885,7 +959,9 @@ function NodeRow({
       </span>
       <span className="min-w-0 flex-1 leading-tight">
         <span className="block text-xs tracking-widest text-muted-foreground uppercase">
-          {PRIMITIVE_LABELS[node.primitive.kind]}
+          {node.kind === "group"
+            ? `group · ${node.children.length}`
+            : PRIMITIVE_LABELS[node.primitive.kind]}
         </span>
         <span className="block truncate text-sm">{node.name}</span>
       </span>
@@ -923,6 +999,64 @@ function NodeRow({
   );
 }
 
+// Recursive renderer for the sidebar: walks the node tree and indents
+// children under groups. Each NodeRow is its own draggable / drop target
+// (existing pragmatic-dnd plumbing handles top/bottom edge sibling
+// reordering). Drop-INTO-group reordering uses the group row itself as
+// a drop target that prepends the dragged item into the group's children.
+function NodeTree({
+  nodes,
+  selectedNodeId,
+  onSelect,
+  onToggle,
+  onDuplicate,
+  onRemove,
+  onReorder,
+  depth = 0,
+}: {
+  nodes: Node[];
+  selectedNodeId: number | null;
+  onSelect: (id: number) => void;
+  onToggle: (id: number) => void;
+  onDuplicate: (id: number) => void;
+  onRemove: (id: number) => void;
+  onReorder: (fromId: number, toId: number, edge: Edge) => void;
+  depth?: number;
+}) {
+  return (
+    <>
+      {nodes.map((node, idx) => (
+        <div key={node.id} style={{ paddingLeft: depth * 14 }}>
+          <NodeRow
+            node={node}
+            index={idx}
+            selected={selectedNodeId === node.id}
+            onSelect={() => onSelect(node.id)}
+            onToggle={() => onToggle(node.id)}
+            onDuplicate={() => onDuplicate(node.id)}
+            onRemove={() => onRemove(node.id)}
+            onReorder={onReorder}
+          />
+          {node.kind === "group" && node.children.length > 0 && (
+            <div className="mt-1 flex flex-col gap-1">
+              <NodeTree
+                nodes={node.children}
+                selectedNodeId={selectedNodeId}
+                onSelect={onSelect}
+                onToggle={onToggle}
+                onDuplicate={onDuplicate}
+                onRemove={onRemove}
+                onReorder={onReorder}
+                depth={depth + 1}
+              />
+            </div>
+          )}
+        </div>
+      ))}
+    </>
+  );
+}
+
 function DropIndicator({ position }: { position: "top" | "bottom" }) {
   const style: CSSProperties = position === "top" ? { top: -1 } : { bottom: -1 };
   return (
@@ -940,6 +1074,7 @@ function PropertiesPanel({
   nodes,
   onRandomize,
   onCenter,
+  onUngroup,
   onPatchNode,
   onPatchPrimitive,
   onAddModifier,
@@ -954,6 +1089,7 @@ function PropertiesPanel({
   nodes: Node[];
   onRandomize: () => void;
   onCenter: () => void;
+  onUngroup: () => void;
   onPatchNode: (patch: Partial<Node>) => void;
   onPatchPrimitive: (patch: Record<string, unknown>) => void;
   onAddModifier: (k: ModifierKind) => void;
@@ -970,6 +1106,16 @@ function PropertiesPanel({
           {node.name}
         </span>
         <div className="flex items-center gap-1">
+          {node.kind === "group" && (
+            <button
+              type="button"
+              onClick={onUngroup}
+              title="ungroup (children rejoin the parent list)"
+              className="flex items-center gap-1 border border-border px-2 py-1 text-xs tracking-wider uppercase hover:bg-foreground hover:text-background"
+            >
+              ungroup
+            </button>
+          )}
           <button
             type="button"
             onClick={onCenter}
@@ -988,9 +1134,20 @@ function PropertiesPanel({
           </button>
         </div>
       </div>
-      <PanelSection title="Primitive" sub={PRIMITIVE_LABELS[node.primitive.kind]}>
-        <PrimitiveControls primitive={node.primitive} onPatch={onPatchPrimitive} />
-      </PanelSection>
+      {node.kind === "primitive" && (
+        <PanelSection title="Primitive" sub={PRIMITIVE_LABELS[node.primitive.kind]}>
+          <PrimitiveControls primitive={node.primitive} onPatch={onPatchPrimitive} />
+        </PanelSection>
+      )}
+      {node.kind === "group" && (
+        <PanelSection title="Group" sub={`${node.children.length} children`}>
+          <p className="text-[11px] italic text-muted-foreground">
+            drag nodes into this group's row in the layer list to add them.
+            its modifier stack applies to the combined geometry of all
+            children.
+          </p>
+        </PanelSection>
+      )}
 
       <PanelSection
         title="Modifiers"
@@ -1045,19 +1202,49 @@ function PropertiesPanel({
         </div>
       </PanelSection>
 
-      <PanelSection title="Style">
-        <NodeStyleControls
-          fill={node.fill}
-          fillEnabled={node.fillEnabled}
-          stroke={node.stroke}
-          strokeEnabled={node.strokeEnabled}
-          strokeWidth={node.strokeWidth}
-          opacity={node.opacity}
-          palette={palette}
-          onPatch={onPatchNode}
-        />
-      </PanelSection>
+      {node.kind === "primitive" ? (
+        <PanelSection title="Style">
+          <NodeStyleControls
+            fill={node.fill}
+            fillEnabled={node.fillEnabled}
+            stroke={node.stroke}
+            strokeEnabled={node.strokeEnabled}
+            strokeWidth={node.strokeWidth}
+            opacity={node.opacity}
+            palette={palette}
+            onPatch={onPatchNode}
+          />
+        </PanelSection>
+      ) : (
+        // Groups only expose opacity; children carry their own fill/stroke.
+        <PanelSection title="Style">
+          <GroupOpacityControl
+            opacity={node.opacity}
+            onChange={(v) => onPatchNode({ opacity: v })}
+          />
+        </PanelSection>
+      )}
     </div>
+  );
+}
+
+function GroupOpacityControl({
+  opacity,
+  onChange,
+}: {
+  opacity: number;
+  onChange: (v: number) => void;
+}) {
+  // Inline so we don't need to grow controls.tsx for one slider.
+  return (
+    <SliderControl
+      name="opacity"
+      min={0}
+      max={1}
+      step={0.05}
+      value={opacity}
+      onChange={onChange}
+    />
   );
 }
 

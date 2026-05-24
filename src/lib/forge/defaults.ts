@@ -14,6 +14,7 @@ import type {
   PolygonParams,
   Primitive,
   PrimitiveKind,
+  PrimitiveNode,
   RadialRepeatParams,
   RectParams,
   ScatterParams,
@@ -390,11 +391,8 @@ function randomizePrimitive(primitive: Primitive): Primitive {
 
 export function randomizeNode(node: Node, palette: string[]): Node {
   const r = Math.random;
-  const primitive = randomizePrimitive(node.primitive);
-  const fill =
-    palette.length > 0 ? palette[Math.floor(r() * palette.length)] : node.fill;
   // Reroll seeds on modifiers that use them so the random output actually
-  // looks different each time.
+  // looks different each time. Works for both primitive and group nodes.
   const modifiers = node.modifiers.map((m) => {
     if (m.kind === "scatter") {
       return { ...m, params: { ...m.params, seed: Math.floor(r() * 9999) } };
@@ -404,12 +402,24 @@ export function randomizeNode(node: Node, palette: string[]): Node {
     }
     return m;
   });
+  if (node.kind === "group") {
+    // Recurse into children so a "randomize group" rerolls everything below.
+    return {
+      ...node,
+      modifiers,
+      children: node.children.map((c) => randomizeNode(c, palette)),
+    };
+  }
+  const primitive = randomizePrimitive(node.primitive);
+  const fill =
+    palette.length > 0 ? palette[Math.floor(r() * palette.length)] : node.fill;
   return { ...node, primitive, fill, modifiers };
 }
 
-export function makeNode(kind: PrimitiveKind, id: number): Node {
+export function makeNode(kind: PrimitiveKind, id: number): PrimitiveNode {
   return {
     id,
+    kind: "primitive",
     name: PRIMITIVE_LABELS[kind],
     enabled: true,
     primitive: makePrimitive(kind),
@@ -418,6 +428,18 @@ export function makeNode(kind: PrimitiveKind, id: number): Node {
     stroke: "#000000",
     strokeEnabled: false,
     strokeWidth: 0,
+    opacity: 1,
+    modifiers: [],
+  };
+}
+
+export function makeGroup(id: number, children: Node[] = []): Node {
+  return {
+    id,
+    kind: "group",
+    name: "Group",
+    enabled: true,
+    children,
     opacity: 1,
     modifiers: [],
   };
@@ -443,6 +465,7 @@ export function makeDefaultDoc(): Doc {
     nodes: [
       {
         id: nextNodeId(),
+        kind: "primitive",
         name: "Bar stack",
         enabled: true,
         primitive: makePrimitive("barStack"),

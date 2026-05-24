@@ -120,12 +120,7 @@ function NodeContent({ node, allNodes }: { node: Node; allNodes: Node[] }) {
           ))}
         </defs>
       )}
-      <g
-        fill={node.fillEnabled ? node.fill : "none"}
-        stroke={node.strokeEnabled ? node.stroke : "none"}
-        strokeWidth={node.strokeEnabled && node.strokeWidth ? node.strokeWidth : undefined}
-        opacity={node.opacity}
-      >
+      <g>
         {instances.map((inst, i) => (
           <g
             key={i}
@@ -133,12 +128,13 @@ function NodeContent({ node, allNodes }: { node: Node; allNodes: Node[] }) {
             clipPath={inst.clipPathId ? `url(#${inst.clipPathId})` : undefined}
             fill={inst.fill}
             stroke={inst.stroke}
+            strokeWidth={inst.strokeWidth || undefined}
             opacity={inst.opacity}
           >
             {inst.pathOverride ? (
               <path d={inst.pathOverride} />
             ) : (
-              renderPrimitive(node.primitive)
+              renderPrimitive(inst.primitive)
             )}
           </g>
         ))}

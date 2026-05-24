@@ -146,19 +146,39 @@ export type Modifier =
 export type ModifierKind = Modifier["kind"];
 
 // ---------- Node + Doc ----------
-export type Node = {
+// A node is either a primitive (one shape with style + modifier stack) or
+// a group that holds child nodes and applies its own modifier stack on top
+// of the combined children. Groups can nest groups, so the doc is a tree.
+//
+// All nodes share `kind` as the discriminator and the common fields
+// `id`, `name`, `enabled`, `modifiers`, `opacity`.
+
+export type PrimitiveNode = {
   id: Id;
+  kind: "primitive";
   name: string;
   enabled: boolean;
   primitive: Primitive;
   fill: string;
-  fillEnabled: boolean; // when false, emits fill="none" while keeping the color memorized
+  fillEnabled: boolean;
   stroke: string;
-  strokeEnabled: boolean; // when false, emits stroke="none"
+  strokeEnabled: boolean;
   strokeWidth: number;
   opacity: number;
   modifiers: Modifier[];
 };
+
+export type GroupNode = {
+  id: Id;
+  kind: "group";
+  name: string;
+  enabled: boolean;
+  children: Node[];
+  opacity: number;
+  modifiers: Modifier[];
+};
+
+export type Node = PrimitiveNode | GroupNode;
 
 export type GrainParams = {
   enabled: boolean;

@@ -79,24 +79,23 @@ function clipDefSvg(def: ClipDef): string {
 function nodeSvg(node: Node, allNodes: readonly Node[]): string {
   const { instances, clipDefs } = expandNode(node, allNodes);
   const defs = clipDefs.length > 0 ? `<defs>${clipDefs.map(clipDefSvg).join("")}</defs>` : "";
-  const fillVal = node.fillEnabled ? node.fill : "none";
-  const strokeVal = node.strokeEnabled ? node.stroke : "none";
-  const strokeW = node.strokeEnabled ? node.strokeWidth : 0;
-  const nodeAttrs = `fill="${escapeAttr(fillVal)}" stroke="${escapeAttr(strokeVal)}" stroke-width="${strokeW}" opacity="${node.opacity}"`;
+  // Style is now resolved per-instance (groups can mix primitives and
+  // styles), so we set fill/stroke/opacity on each instance's <g>.
   const body = instances
     .map((inst) => {
       const t = inst.transform ? ` transform="${escapeAttr(inst.transform.trim())}"` : "";
       const cp = inst.clipPathId ? ` clip-path="url(#${inst.clipPathId})"` : "";
-      const fill = inst.fill ? ` fill="${escapeAttr(inst.fill)}"` : "";
-      const stroke = inst.stroke ? ` stroke="${escapeAttr(inst.stroke)}"` : "";
-      const op = inst.opacity != null ? ` opacity="${inst.opacity}"` : "";
+      const fill = ` fill="${escapeAttr(inst.fill)}"`;
+      const stroke = ` stroke="${escapeAttr(inst.stroke)}"`;
+      const sw = inst.strokeWidth ? ` stroke-width="${inst.strokeWidth}"` : "";
+      const op = ` opacity="${inst.opacity}"`;
       const shape = inst.pathOverride
         ? `<path d="${inst.pathOverride}" />`
-        : primitiveSvg(node.primitive);
-      return `<g${t}${cp}${fill}${stroke}${op}>${shape}</g>`;
+        : primitiveSvg(inst.primitive);
+      return `<g${t}${cp}${fill}${stroke}${sw}${op}>${shape}</g>`;
     })
     .join("");
-  return `${defs}<g ${nodeAttrs}>${body}</g>`;
+  return `${defs}<g>${body}</g>`;
 }
 
 function grainSvg(doc: Doc): string {

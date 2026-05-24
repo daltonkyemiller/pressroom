@@ -13,7 +13,7 @@
 import paper from "paper";
 import { svgPlacementTransform } from "./engine";
 import { getFontEntry } from "./font-registry";
-import type { Node, Primitive, SvgParams, TextParams } from "./types";
+import type { Primitive, SvgParams, TextParams } from "./types";
 
 export type BooleanOp = "union" | "subtract" | "intersect" | "exclude";
 
@@ -87,37 +87,37 @@ function textPathSvg(p: TextParams): string {
   return `<path d="${d}" />`;
 }
 
-function buildNodeSvg(node: Node, instances: Array<{ transform: string }>): string {
-  // Each instance becomes a <g transform="..."> wrapping a copy of the
-  // primitive. paper.js sees one SVG document, parses transforms, and
-  // gives us back paper.Items in matching world coordinates.
-  //
-  // We import the wedge/polygon shapes already in d-string form to avoid
-  // round-tripping them through the export module (cycle).
-  let shape: string;
-  if (node.primitive.kind === "wedge") {
-    shape = `<path d="${wedgeD(node.primitive.params)}" />`;
-  } else if (node.primitive.kind === "polygon") {
-    shape = `<path d="${polygonD(node.primitive.params)}" />`;
-  } else if (node.primitive.kind === "text") {
-    // Convert text to outline path via opentype.js (in textPathSvg).
-    // Returns "" if the font's bytes haven't been parsed yet (e.g. local
-    // font still lazy-loading), and the boolean degrades gracefully.
-    shape = textPathSvg(node.primitive.params);
-  } else if (node.primitive.kind === "svg") {
-    shape = svgPrimitiveFragment(node.primitive.params);
-  } else {
-    shape = primitiveSvgFragment(node.primitive);
-  }
-  if (!shape) return "";
+// Render the boolean-agnostic geometry for a single primitive. wedge /
+// polygon / svg / text get specially handled (path strings or outline
+// conversions); everything else falls back to primitiveSvgFragment.
+function primitiveToSvg(p: Primitive): string {
+  if (p.kind === "wedge") return `<path d="${wedgeD(p.params)}" />`;
+  if (p.kind === "polygon") return `<path d="${polygonD(p.params)}" />`;
+  if (p.kind === "text") return textPathSvg(p.params);
+  if (p.kind === "svg") return svgPrimitiveFragment(p.params);
+  return primitiveSvgFragment(p);
+}
 
-  const instanceTags = instances
+// Build an SVG document from a flat list of instances. Used by the
+// boolean engine to hand paper.js a complete piece of geometry. Each
+// instance can reference a DIFFERENT primitive (groups produce that),
+// so we generate the shape fragment per-instance instead of once.
+function buildInstancesSvg(
+  instances: Array<{ primitive?: Primitive; transform: string; pathOverride?: string }>,
+): string {
+  const tags = instances
     .map((inst) => {
       const t = inst.transform ? ` transform="${inst.transform.trim()}"` : "";
-      return `<g${t}>${shape}</g>`;
+      const shape = inst.pathOverride
+        ? `<path d="${inst.pathOverride}" />`
+        : inst.primitive
+          ? primitiveToSvg(inst.primitive)
+          : "";
+      return shape ? `<g${t}>${shape}</g>` : "";
     })
+    .filter(Boolean)
     .join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg">${instanceTags}</svg>`;
+  return tags ? `<svg xmlns="http://www.w3.org/2000/svg">${tags}</svg>` : "";
 }
 
 // Local copies of polygon/wedge d-string builders to keep this module
@@ -257,9 +257,8 @@ export function computeBooleanPath(
   return d;
 }
 
-export function nodeToSvgFragment(
-  node: Node,
-  instances: Array<{ transform: string }>,
+export function instancesToSvgFragment(
+  instances: Array<{ primitive?: Primitive; transform: string; pathOverride?: string }>,
 ): string {
-  return buildNodeSvg(node, instances);
+  return buildInstancesSvg(instances);
 }

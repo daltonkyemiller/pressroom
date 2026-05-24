@@ -201,21 +201,28 @@ export function runGpuChain(img: ImageData, chain: readonly GpuChainItem[]): Ima
     g.useProgram(entry.program);
     g.bindFramebuffer(g.FRAMEBUFFER, pp.fbos[writeIdx]);
 
-    // Bind source.
-    g.activeTexture(g.TEXTURE0);
-    g.bindTexture(g.TEXTURE_2D, pp.textures[readIdx]);
-    g.uniform1i(entry.uniforms.u_src, 0);
-    g.uniform2f(entry.uniforms.u_resolution, w, h);
-
-    // Update + bind aux textures (units 1..N).
+    // updateAux often calls gl.bindTexture without first switching the
+    // active unit, so it would silently bind its aux texture to whatever
+    // unit is currently active (most recently TEXTURE0, i.e. u_src). Park
+    // the active unit on a high index first so updateAux can mutate its
+    // aux without clobbering u_src.
     if (effect.updateAux && entry.aux.length > 0) {
+      g.activeTexture(g.TEXTURE0 + 15);
       effect.updateAux(g, entry.aux, params);
     }
+
+    // Bind aux textures to units 1..N for the shader.
     for (let j = 0; j < entry.aux.length; j++) {
       g.activeTexture(g.TEXTURE1 + j);
       g.bindTexture(g.TEXTURE_2D, entry.aux[j]);
       g.uniform1i(entry.uniforms[`u_aux${j}`], 1 + j);
     }
+
+    // Bind source LAST so unit 0 = u_src no matter what updateAux did.
+    g.activeTexture(g.TEXTURE0);
+    g.bindTexture(g.TEXTURE_2D, pp.textures[readIdx]);
+    g.uniform1i(entry.uniforms.u_src, 0);
+    g.uniform2f(entry.uniforms.u_resolution, w, h);
 
     effect.setUniforms(g, entry.uniforms, params, w, h);
 

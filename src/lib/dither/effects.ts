@@ -32,6 +32,8 @@ export type EffectKind =
   | "chromatic"
   | "edgeBleed"
   | "text"
+  | "stipple"
+  | "riso"
   | "duotone";
 
 export type BlurParams = { radius: number };
@@ -119,6 +121,42 @@ export type TextParams = {
   seed: number;
 };
 
+export type StippleParams = {
+  density: number; // px between dot centers on the base grid (smaller = more dots)
+  minSize: number; // px — radius at lightest covered pixel
+  maxSize: number; // px — radius at darkest pixel
+  threshold: number; // 0..100 — ink amount below this gets no dot
+  jitter: number; // 0..100 — % of cell size to randomly offset each dot
+  inkColor: string;
+  bgColor: string;
+  bgEnabled: boolean; // when true, replaces image with bgColor before drawing dots
+  preserveColors: boolean; // sample the source color for each dot instead of inkColor
+  seed: number;
+};
+export type RisoParams = {
+  ink1Color: string;
+  ink2Color: string;
+  paperColor: string;
+  // 0..100. Pixels with luminance below threshold1 get ink1; below threshold2
+  // get ink2. threshold2 should typically be lower than threshold1 so ink2
+  // covers a smaller subset (the deepest shadows).
+  threshold1: number;
+  threshold2: number;
+  // Softness of the threshold ramp (0 = hard step, 1 = wide feather).
+  softness: number;
+  // Per-ink misregistration: how far to offset the sample position before
+  // computing coverage. Mimics misaligned printing.
+  offset1: number;
+  angle1: number;
+  offset2: number;
+  angle2: number;
+  // Per-ink grain — random erosion of the ink coverage, so plates look
+  // screened rather than solid.
+  grain1: number;
+  grain2: number;
+  seed: number;
+};
+
 export type EdgeBleedParams = {
   amount: number; // px — how far dark/light spreads into its opposite
   polarity: "spread-dark" | "spread-light"; // spread-dark = dilate dark areas (ink bleeding into paper); spread-light = erode dark (paper eating ink)
@@ -151,6 +189,8 @@ export type ParamsByKind = {
   chromatic: ChromaticParams;
   edgeBleed: EdgeBleedParams;
   text: TextParams;
+  stipple: StippleParams;
+  riso: RisoParams;
   duotone: DuotoneParams;
 };
 
@@ -229,6 +269,33 @@ export const EFFECT_DEFAULTS: { [K in EffectKind]: ParamsByKind[K] } = {
     thresholdSoftness: 0.15,
     seed: 1,
   },
+  stipple: {
+    density: 7,
+    minSize: 0.5,
+    maxSize: 2.8,
+    threshold: 5,
+    jitter: 60,
+    inkColor: "#111111",
+    bgColor: "#f5f0e0",
+    bgEnabled: true,
+    preserveColors: false,
+    seed: 1,
+  },
+  riso: {
+    ink1Color: "#ff4a3d",
+    ink2Color: "#1c1c2e",
+    paperColor: "#f4ecd8",
+    threshold1: 70,
+    threshold2: 35,
+    softness: 0.18,
+    offset1: 0,
+    angle1: 0,
+    offset2: 2,
+    angle2: 135,
+    grain1: 25,
+    grain2: 35,
+    seed: 1,
+  },
   duotone: DUOTONE_DEFAULTS,
 };
 
@@ -246,6 +313,8 @@ export const EFFECT_LABELS: Record<EffectKind, string> = {
   chromatic: "Chromatic shift",
   edgeBleed: "Edge bleed",
   text: "Text",
+  stipple: "Stipple",
+  riso: "Risograph",
   duotone: "Duotone dashes",
 };
 
@@ -263,6 +332,8 @@ export const EFFECT_DESCRIPTIONS: Record<EffectKind, string> = {
   chromatic: "rgb shift · print",
   edgeBleed: "ink spread · uneven",
   text: "typography · bleed",
+  stipple: "organic dots · density",
+  riso: "2-ink screen · misregister",
   duotone: "shader · capsule grid",
 };
 
@@ -716,6 +787,19 @@ function applyNoise(img: ImageData, p: NoiseParams): ImageData {
 // Two independent noise fields (one per axis) give the warp directional
 // freedom. Multiple octaves overlay the field at halving scales for a
 // richer "natural" texture rather than a single smooth wobble.
+// Deterministic 32-bit hash → [0, 1). Same flavor as forge's so effects
+// stay reproducible across reloads.
+function hash(seed: number, i: number): number {
+  let n = ((seed * 374761393) ^ (i * 668265263)) >>> 0;
+  n = Math.imul(n ^ (n >>> 13), 1274126177);
+  n ^= n >>> 16;
+  return (n >>> 0) / 0xffffffff;
+}
+
+function hashSigned(seed: number, i: number): number {
+  return hash(seed, i) * 2 - 1;
+}
+
 function buildNoiseField(
   w: number,
   h: number,
@@ -1194,6 +1278,161 @@ function hexToRgb(hex: string): [number, number, number] {
   return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff];
 }
 
+// ---------- STIPPLE ----------
+// Jittered-grid stippling: walk the image at `density` spacing, perturb each
+// position by a seeded jitter, and stamp a dot whose radius scales with the
+// local darkness. Optionally clears to a paper color so the output reads as
+// "drawn from scratch" rather than blended over the source. With
+// preserveColors the dot inherits the sampled pixel's hue — gives a pointillist
+// feel rather than a pen-and-ink one.
+function applyStipple(img: ImageData, p: StippleParams): ImageData {
+  const w = img.width;
+  const h = img.height;
+  const src = new Uint8ClampedArray(img.data);
+  const dst = img.data;
+
+  if (p.bgEnabled) {
+    const bg = hexToRgb255(p.bgColor);
+    for (let i = 0; i < dst.length; i += 4) {
+      dst[i] = bg[0];
+      dst[i + 1] = bg[1];
+      dst[i + 2] = bg[2];
+    }
+  }
+
+  const ink = hexToRgb255(p.inkColor);
+  const spacing = Math.max(1, Math.round(p.density));
+  const jitterAmp = (p.jitter / 100) * spacing * 0.5;
+  const tCut = p.threshold / 100;
+
+  for (let gy = 0; gy < h; gy += spacing) {
+    for (let gx = 0; gx < w; gx += spacing) {
+      const cellIdx = (gy / spacing) * Math.ceil(w / spacing) + gx / spacing;
+      const ox = hashSigned(p.seed, cellIdx * 2) * jitterAmp;
+      const oy = hashSigned(p.seed, cellIdx * 2 + 1) * jitterAmp;
+      const cx = Math.max(0, Math.min(w - 1, Math.round(gx + ox)));
+      const cy = Math.max(0, Math.min(h - 1, Math.round(gy + oy)));
+      const si = (cy * w + cx) * 4;
+      const lum = (0.2126 * src[si] + 0.7152 * src[si + 1] + 0.0722 * src[si + 2]) / 255;
+      const inkAmount = 1 - lum; // dark pixel → high ink
+      if (inkAmount < tCut) continue;
+      const radius = p.minSize + (p.maxSize - p.minSize) * inkAmount;
+      const r2 = radius * radius;
+      const rCeil = Math.ceil(radius);
+      const colR = p.preserveColors ? src[si] : ink[0];
+      const colG = p.preserveColors ? src[si + 1] : ink[1];
+      const colB = p.preserveColors ? src[si + 2] : ink[2];
+      const ymin = Math.max(0, cy - rCeil);
+      const ymax = Math.min(h - 1, cy + rCeil);
+      const xmin = Math.max(0, cx - rCeil);
+      const xmax = Math.min(w - 1, cx + rCeil);
+      for (let py = ymin; py <= ymax; py++) {
+        const dy = py - cy;
+        for (let px = xmin; px <= xmax; px++) {
+          const dx = px - cx;
+          const d2 = dx * dx + dy * dy;
+          if (d2 > r2) continue;
+          // Soft-edged dot for sub-pixel feel (linear falloff in the last
+          // pixel of the radius). Without this the smallest dots flicker.
+          const edge = Math.max(0, 1 - (Math.sqrt(d2) - (radius - 1)));
+          const a = Math.min(1, edge);
+          const o = (py * w + px) * 4;
+          dst[o] = dst[o] + (colR - dst[o]) * a;
+          dst[o + 1] = dst[o + 1] + (colG - dst[o + 1]) * a;
+          dst[o + 2] = dst[o + 2] + (colB - dst[o + 2]) * a;
+        }
+      }
+    }
+  }
+  return img;
+}
+
+// ---------- RISOGRAPH ----------
+// Two-ink separation with misregistration + grain. Mimics a Riso/Gocco
+// print: each ink's coverage is a soft threshold of the source luminance
+// sampled at an OFFSET position (so the plates are misaligned the way
+// real prints are), then high-freq noise punches specks into the coverage
+// (the "screened" look). Inks combine on a paper color via subtractive-ish
+// multiply blending.
+function applyRiso(img: ImageData, p: RisoParams): ImageData {
+  const w = img.width;
+  const h = img.height;
+  const src = new Uint8ClampedArray(img.data);
+  const dst = img.data;
+  const paper = hexToRgb255(p.paperColor);
+  const ink1 = hexToRgb255(p.ink1Color);
+  const ink2 = hexToRgb255(p.ink2Color);
+
+  // Polar → cartesian offsets for each ink plate.
+  const a1 = (p.angle1 * Math.PI) / 180;
+  const a2 = (p.angle2 * Math.PI) / 180;
+  const o1x = Math.cos(a1) * p.offset1;
+  const o1y = Math.sin(a1) * p.offset1;
+  const o2x = Math.cos(a2) * p.offset2;
+  const o2y = Math.sin(a2) * p.offset2;
+
+  const t1 = p.threshold1 / 100;
+  const t2 = p.threshold2 / 100;
+  const ramp = Math.max(0.001, p.softness);
+
+  // Coverage at luminance L for a given cutoff: 1 well below cutoff,
+  // tapering linearly to 0 above. Soft re-binarization so prints don't
+  // look like sharp curves.
+  function coverage(L: number, cutoff: number): number {
+    const v = (cutoff - L) / ramp;
+    if (v <= 0) return 0;
+    if (v >= 1) return 1;
+    return v;
+  }
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 4;
+      // Sample both inks' luminance at their respective offset positions.
+      const x1 = Math.max(0, Math.min(w - 1, Math.round(x + o1x)));
+      const y1 = Math.max(0, Math.min(h - 1, Math.round(y + o1y)));
+      const x2 = Math.max(0, Math.min(w - 1, Math.round(x + o2x)));
+      const y2 = Math.max(0, Math.min(h - 1, Math.round(y + o2y)));
+      const i1 = (y1 * w + x1) * 4;
+      const i2 = (y2 * w + x2) * 4;
+      const L1 = (0.2126 * src[i1] + 0.7152 * src[i1 + 1] + 0.0722 * src[i1 + 2]) / 255;
+      const L2 = (0.2126 * src[i2] + 0.7152 * src[i2 + 1] + 0.0722 * src[i2 + 2]) / 255;
+
+      let c1 = coverage(L1, t1);
+      let c2 = coverage(L2, t2);
+
+      // Per-ink grain — deterministic hash so it's stable across renders.
+      // grain=100 means coverage can be erased entirely in the noisiest
+      // spots. grain=0 = solid plate.
+      if (p.grain1 > 0) {
+        const n = hash(p.seed, o) * 2;
+        c1 *= Math.max(0, 1 - n * (p.grain1 / 100));
+      }
+      if (p.grain2 > 0) {
+        const n = hash(p.seed + 31, o) * 2;
+        c2 *= Math.max(0, 1 - n * (p.grain2 / 100));
+      }
+      if (c1 < 0) c1 = 0;
+      else if (c1 > 1) c1 = 1;
+      if (c2 < 0) c2 = 0;
+      else if (c2 > 1) c2 = 1;
+
+      // Subtractive ink mix on paper. Each ink absorbs its complement of
+      // light; overlapping inks multiply absorption.
+      const m1r = 1 - c1 * (1 - ink1[0] / 255);
+      const m1g = 1 - c1 * (1 - ink1[1] / 255);
+      const m1b = 1 - c1 * (1 - ink1[2] / 255);
+      const m2r = 1 - c2 * (1 - ink2[0] / 255);
+      const m2g = 1 - c2 * (1 - ink2[1] / 255);
+      const m2b = 1 - c2 * (1 - ink2[2] / 255);
+      dst[o] = paper[0] * m1r * m2r;
+      dst[o + 1] = paper[1] * m1g * m2g;
+      dst[o + 2] = paper[2] * m1b * m2b;
+    }
+  }
+  return img;
+}
+
 export function applyLayer(img: ImageData, layer: Layer): ImageData {
   switch (layer.kind) {
     case "blur":
@@ -1222,6 +1461,10 @@ export function applyLayer(img: ImageData, layer: Layer): ImageData {
       return applyEdgeBleed(img, layer.params);
     case "text":
       return applyText(img, layer.params);
+    case "stipple":
+      return applyStipple(img, layer.params);
+    case "riso":
+      return applyRiso(img, layer.params);
     case "duotone":
       return applyDuotoneShader(img, layer.params);
   }
@@ -1319,6 +1562,14 @@ export function summarizeLayer(layer: Layer): string {
       const p = layer.params;
       const trimmed = p.content.length > 14 ? `${p.content.slice(0, 14)}…` : p.content;
       return `"${trimmed}" · ${p.size}px`;
+    }
+    case "stipple": {
+      const p = layer.params;
+      return `d${p.density} · ${p.minSize.toFixed(1)}–${p.maxSize.toFixed(1)}px · j${p.jitter}`;
+    }
+    case "riso": {
+      const p = layer.params;
+      return `t${p.threshold1}/${p.threshold2} · off ${p.offset2}px · g${p.grain1}/${p.grain2}`;
     }
     case "duotone": {
       const p = layer.params;

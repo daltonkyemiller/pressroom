@@ -44,6 +44,8 @@ const EFFECT_KINDS: EffectKind[] = [
   "displace",
   "chromatic",
   "edgeBleed",
+  "stipple",
+  "riso",
   "text",
   "invert",
   "noise",

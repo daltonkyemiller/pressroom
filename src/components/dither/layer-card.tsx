@@ -26,7 +26,7 @@ import {
   subscribeFonts,
 } from "@/lib/dither/font-registry";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -1287,10 +1287,11 @@ function TextLayerControls({ layer, onPatch, onStart, onCommit }: TextLayerContr
         <span className="mb-1.5 block text-xs tracking-wider text-muted-foreground uppercase">
           content
         </span>
-        <Input
+        <Textarea
           value={p.content}
           onChange={(e) => onPatch({ content: e.target.value })}
-          placeholder="type something"
+          placeholder="type something — newlines start new lines"
+          rows={2}
         />
       </div>
 
@@ -1353,6 +1354,17 @@ function TextLayerControls({ layer, onPatch, onStart, onCommit }: TextLayerContr
         onCommit={onCommit}
         onChange={(v) => onPatch({ letterSpacing: v })}
       />
+      <SliderControl
+        name="line height"
+        min={0.5}
+        max={3}
+        step={0.05}
+        value={p.lineHeight}
+        unit="×"
+        onStart={onStart}
+        onCommit={onCommit}
+        onChange={(v) => onPatch({ lineHeight: v })}
+      />
       <SegControl
         name="align"
         value={p.align}
@@ -1362,6 +1374,16 @@ function TextLayerControls({ layer, onPatch, onStart, onCommit }: TextLayerContr
           { value: "right", label: "right" },
         ]}
         onChange={(v) => onPatch({ align: v })}
+      />
+      <SegControl
+        name="v-align"
+        value={p.vAlign}
+        options={[
+          { value: "top", label: "top" },
+          { value: "middle", label: "middle" },
+          { value: "bottom", label: "bottom" },
+        ]}
+        onChange={(v) => onPatch({ vAlign: v })}
       />
       <ToggleControl name="bold" value={p.bold} onChange={(v) => onPatch({ bold: v })} />
       <ToggleControl

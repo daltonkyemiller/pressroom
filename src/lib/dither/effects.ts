@@ -98,7 +98,9 @@ export type TextParams = {
   font: string; // CSS font-family
   size: number; // px (in working-resolution space)
   letterSpacing: number; // px
+  lineHeight: number; // multiplier of size (1 = tight, 1.2 = normal, 2 = airy)
   align: "left" | "center" | "right";
+  vAlign: "top" | "middle" | "bottom"; // vertical alignment of the multi-line block
   bold: boolean;
   italic: boolean;
   // Transform — placement of the text on the canvas
@@ -250,7 +252,9 @@ export const EFFECT_DEFAULTS: { [K in EffectKind]: ParamsByKind[K] } = {
     font: "Mondwest",
     size: 200,
     letterSpacing: 0,
+    lineHeight: 1.1,
     align: "center",
+    vAlign: "middle",
     bold: false,
     italic: false,
     x: 50,
@@ -1092,12 +1096,22 @@ function rasterizeTextMask(p: TextParams, w: number, h: number): Uint8ClampedArr
   ctx.rotate((p.rotation * Math.PI) / 180);
   const s = p.scale / 100;
   ctx.scale(s, s);
-  // Multi-line support: split on newline, vertically center the block.
+  // Multi-line support: split on newline, then anchor the block by vAlign.
+  // textBaseline is "middle", so each line's baseline sits in the visual
+  // middle of its glyph cap. The first baseline offset places the block
+  // such that:
+  //   - top    → top edge of the first line lands at (cx, cy)
+  //   - middle → block center lands at (cx, cy)
+  //   - bottom → bottom edge of the last line lands at (cx, cy)
   const lines = p.content.split("\n");
-  const lineH = p.size * 1.1;
-  const block = (lines.length - 1) * lineH;
-  for (let i = 0; i < lines.length; i++) {
-    ctx.fillText(lines[i], 0, i * lineH - block / 2);
+  const lineH = p.size * Math.max(0.1, p.lineHeight);
+  const n = lines.length;
+  let firstY: number;
+  if (p.vAlign === "top") firstY = lineH / 2;
+  else if (p.vAlign === "bottom") firstY = -lineH / 2 - (n - 1) * lineH;
+  else firstY = -((n - 1) * lineH) / 2;
+  for (let i = 0; i < n; i++) {
+    ctx.fillText(lines[i], 0, firstY + i * lineH);
   }
   // Pull the alpha channel out as a single-channel mask — RGB is unused.
   const rgba = ctx.getImageData(0, 0, w, h).data;

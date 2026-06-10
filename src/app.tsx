@@ -17,6 +17,8 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { LayerCard } from "@/components/dither/layer-card";
+import { StackMenu } from "@/components/dither/stack-menu";
+import { parseStackPayload } from "@/lib/dither/presets";
 import {
   EFFECT_DEFAULTS,
   EFFECT_DESCRIPTIONS,
@@ -176,6 +178,31 @@ export default function App() {
   // fonts loads (queryLocalFonts) happen on user action via the picker.
   useEffect(() => {
     void initBuiltInFonts();
+  }, []);
+
+  // Window-level paste: if the clipboard text parses as a pressroom stack
+  // payload, replace the live stack with it. Skip while focus is in an
+  // editable field so paste-into-input keeps working.
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      const text = e.clipboardData?.getData("text/plain");
+      if (!text) return;
+      const next = parseStackPayload(text, () => nextIdRef.current++);
+      if (!next) return;
+      e.preventDefault();
+      setLayers(next);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
   }, []);
 
   // ---------- track stage size for fit-to-container display ----------
@@ -519,7 +546,7 @@ export default function App() {
           </div>
         </ScrollArea>
 
-        <div className="shrink-0 px-3.5 pt-2.5 pb-2">
+        <div className="shrink-0 space-y-1.5 px-3.5 pt-2.5 pb-2">
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
@@ -546,6 +573,11 @@ export default function App() {
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
+          <StackMenu
+            layers={layers}
+            nextLayerId={() => nextIdRef.current++}
+            onApplyLayers={(next) => setLayers(next)}
+          />
         </div>
 
         <div className="flex shrink-0 flex-col gap-1.5 border-t border-border px-5 py-3.5 bg-background">

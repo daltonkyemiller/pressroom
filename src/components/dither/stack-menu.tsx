@@ -1,5 +1,13 @@
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { IconCopy, IconStack3Plus, IconXmark } from "nucleo-pixel";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -7,7 +15,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { cn } from "@/lib/utils";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
 import {
   copyStackToClipboard,
   deletePreset,
@@ -22,15 +32,10 @@ import type { Layer } from "@/lib/dither/effects";
 type StackMenuProps = {
   layers: readonly Layer[];
   nextLayerId: () => number;
-  // Called whenever a preset is loaded, the clipboard is pasted, or any
-  // other action replaces the live stack. Receives the new layer list.
   onApplyLayers: (layers: Layer[]) => void;
 };
 
 // ---------- subscribable preset store ----------
-// Components re-render when presets change (save / delete) via a tiny
-// version counter. Keeps the snapshot reference stable until something
-// actually mutates so useSyncExternalStore doesn't loop.
 
 const listeners = new Set<() => void>();
 let snapshot: StackPreset[] = listPresets();
@@ -54,6 +59,10 @@ export function StackMenu({ layers, nextLayerId, onApplyLayers }: StackMenuProps
     () => snapshot,
   );
   const [status, setStatus] = useState<string | null>(null);
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [saveName, setSaveName] = useState("");
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState("");
 
   function flash(message: string) {
     setStatus(message);
@@ -62,11 +71,17 @@ export function StackMenu({ layers, nextLayerId, onApplyLayers }: StackMenuProps
     }, 1800);
   }
 
-  async function onSave() {
-    const name = window.prompt("Preset name:");
+  function openSaveDialog() {
+    setSaveName("");
+    setSaveOpen(true);
+  }
+
+  function confirmSave() {
+    const name = saveName.trim();
     if (!name) return;
     savePreset(name, layers);
     notify();
+    setSaveOpen(false);
     flash(`saved "${name}"`);
   }
 
@@ -84,11 +99,21 @@ export function StackMenu({ layers, nextLayerId, onApplyLayers }: StackMenuProps
     try {
       text = await navigator.clipboard.readText();
     } catch {
-      // readText needs user gesture + clipboard-read permission; if it's
-      // unavailable, fall back to prompt() so we don't dead-end the user.
-      text = window.prompt("Paste a pressroom stack payload:");
+      // clipboard.readText needs an explicit permission / secure context;
+      // when it's unavailable, fall back to a paste dialog instead of
+      // dead-ending the user.
+      setPasteText("");
+      setPasteOpen(true);
+      return;
     }
-    if (!text) return;
+    if (!text) {
+      flash("clipboard empty");
+      return;
+    }
+    applyPayload(text);
+  }
+
+  function applyPayload(text: string) {
     const next = parseStackPayload(text, nextLayerId);
     if (!next) {
       flash("not a pressroom stack");
@@ -96,6 +121,13 @@ export function StackMenu({ layers, nextLayerId, onApplyLayers }: StackMenuProps
     }
     onApplyLayers(next);
     flash(`pasted ${next.length} effects`);
+  }
+
+  function confirmPaste() {
+    const text = pasteText.trim();
+    if (!text) return;
+    applyPayload(text);
+    setPasteOpen(false);
   }
 
   function onLoad(preset: StackPreset) {
@@ -108,6 +140,13 @@ export function StackMenu({ layers, nextLayerId, onApplyLayers }: StackMenuProps
     notify();
     flash(`deleted "${preset.name}"`);
   }
+
+  // Autofocus the input when the save dialog opens so the user can just
+  // start typing.
+  const saveInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (saveOpen) saveInputRef.current?.focus();
+  }, [saveOpen]);
 
   return (
     <div className="space-y-1.5">
@@ -128,7 +167,7 @@ export function StackMenu({ layers, nextLayerId, onApplyLayers }: StackMenuProps
           }
         />
         <DropdownMenuContent align="start" side="top" className="w-[280px]">
-          <DropdownMenuItem onClick={onSave} className="lowercase">
+          <DropdownMenuItem onClick={openSaveDialog} className="lowercase">
             save current as…
           </DropdownMenuItem>
           <DropdownMenuItem onClick={onCopy} className="lowercase">
@@ -167,14 +206,69 @@ export function StackMenu({ layers, nextLayerId, onApplyLayers }: StackMenuProps
         </DropdownMenuContent>
       </DropdownMenu>
       {status && (
-        <p
-          className={cn(
-            "text-[10px] tracking-widest text-muted-foreground uppercase",
-          )}
-        >
+        <p className="text-[10px] tracking-widest text-muted-foreground uppercase">
           {status}
         </p>
       )}
+
+      {/* Save dialog */}
+      <Dialog open={saveOpen} onOpenChange={setSaveOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Save preset</DialogTitle>
+            <DialogDescription>
+              Saves the current effect stack to local storage. Reusing an
+              existing name overwrites it.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            ref={saveInputRef}
+            value={saveName}
+            onChange={(e) => setSaveName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") confirmSave();
+              else if (e.key === "Escape") setSaveOpen(false);
+            }}
+            placeholder="preset name"
+          />
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setSaveOpen(false)}>
+              cancel
+            </Button>
+            <Button size="sm" onClick={confirmSave} disabled={!saveName.trim()}>
+              save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Paste-fallback dialog (shows when navigator.clipboard.readText
+          isn't available — e.g. non-secure contexts or denied permission). */}
+      <Dialog open={pasteOpen} onOpenChange={setPasteOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Paste stack</DialogTitle>
+            <DialogDescription>
+              Your browser blocked clipboard access. Paste the pressroom
+              stack payload below.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={pasteText}
+            onChange={(e) => setPasteText(e.target.value)}
+            placeholder="paste here…"
+            rows={6}
+          />
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setPasteOpen(false)}>
+              cancel
+            </Button>
+            <Button size="sm" onClick={confirmPaste} disabled={!pasteText.trim()}>
+              apply
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -18,7 +18,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import { LayerCard } from "@/components/dither/layer-card";
 import { StackMenu } from "@/components/dither/stack-menu";
-import { parseStackPayload } from "@/lib/dither/presets";
+import { copyStackToClipboard, parseStackPayload } from "@/lib/dither/presets";
 import {
   EFFECT_DEFAULTS,
   EFFECT_DESCRIPTIONS,
@@ -184,16 +184,17 @@ export default function App() {
   // payload, replace the live stack with it. Skip while focus is in an
   // editable field so paste-into-input keeps working.
   useEffect(() => {
+    function isEditableTarget(target: EventTarget | null): boolean {
+      const el = target as HTMLElement | null;
+      if (!el) return false;
+      return (
+        el.tagName === "INPUT" ||
+        el.tagName === "TEXTAREA" ||
+        el.isContentEditable
+      );
+    }
     const onPaste = (e: ClipboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (
-        target &&
-        (target.tagName === "INPUT" ||
-          target.tagName === "TEXTAREA" ||
-          target.isContentEditable)
-      ) {
-        return;
-      }
+      if (isEditableTarget(e.target)) return;
       const text = e.clipboardData?.getData("text/plain");
       if (!text) return;
       const next = parseStackPayload(text, () => nextIdRef.current++);
@@ -201,9 +202,33 @@ export default function App() {
       e.preventDefault();
       setLayers(next);
     };
+    // Ctrl/Cmd+C with nothing else focused → copy the live stack. We
+    // intercept the `copy` event rather than the raw keydown because the
+    // browser only fires `copy` when the user actually invokes the copy
+    // shortcut (or selects "Copy" from the menu), so this also picks up
+    // the menu route automatically. Skip when focus is in a field OR
+    // when there's an active text selection (the user is copying that).
+    const onCopy = (e: ClipboardEvent) => {
+      if (isEditableTarget(e.target)) return;
+      const sel = window.getSelection();
+      if (sel && sel.toString().length > 0) return;
+      e.preventDefault();
+      void copyStackToClipboard(layersRef.current);
+    };
     window.addEventListener("paste", onPaste);
-    return () => window.removeEventListener("paste", onPaste);
+    window.addEventListener("copy", onCopy);
+    return () => {
+      window.removeEventListener("paste", onPaste);
+      window.removeEventListener("copy", onCopy);
+    };
   }, []);
+
+  // Latest-layers ref for the copy handler so its effect can stay
+  // mounted with [] deps while still reading current state.
+  const layersRef = useRef(layers);
+  useEffect(() => {
+    layersRef.current = layers;
+  }, [layers]);
 
   // ---------- track stage size for fit-to-container display ----------
   useEffect(() => {

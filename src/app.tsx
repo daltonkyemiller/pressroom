@@ -22,6 +22,7 @@ import { copyStackToClipboard, parseStackPayload } from "@/lib/dither/presets";
 import {
   EFFECT_DEFAULTS,
   EFFECT_DESCRIPTIONS,
+  EFFECT_KINDS,
   EFFECT_LABELS,
   type EffectKind,
   type Layer,
@@ -35,24 +36,6 @@ import type { Edge } from "@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge
 // look the same while scrubbing as they do when released. Export still
 // runs at the source's native resolution via renderForExport.
 const MAX_DIM = 900;
-const EFFECT_KINDS: EffectKind[] = [
-  "blur",
-  "progressiveBlur",
-  "color",
-  "curves",
-  "halftone",
-  "dither",
-  "duotone",
-  "displace",
-  "chromatic",
-  "edgeBleed",
-  "stipple",
-  "riso",
-  "text",
-  "invert",
-  "noise",
-  "grain",
-];
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 16;
 

@@ -1,4 +1,4 @@
-import type { ColorParams } from "../../effects";
+import type { ColorParams } from "../../effects/color/runtime";
 import type { GpuEffect } from "../runner";
 
 const FRAG = `

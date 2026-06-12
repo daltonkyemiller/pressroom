@@ -1,4 +1,4 @@
-import { boxBlur } from "./effects";
+import { boxBlur } from "./effects/utils";
 
 export type ProgressiveBlurDirection = "linear" | "radial";
 

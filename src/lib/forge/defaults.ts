@@ -3,52 +3,25 @@ import {
   primitiveFor,
   type PrimitiveKind,
 } from "./primitives/runtime-registry";
-import type {
-  ClipParams,
-  ColorCycleParams,
-  Doc,
-  GrainParams,
-  GridRepeatParams,
-  LinearRepeatParams,
-  Modifier,
-  ModifierKind,
-  MirrorParams,
-  Node,
-  Primitive,
-  PrimitiveNode,
-  RadialRepeatParams,
-  ScatterParams,
-} from "./types";
+import {
+  MODIFIERS_RUNTIME,
+  modifierFor,
+  type ModifierKind,
+} from "./modifiers/runtime-registry";
+import type { Doc, GrainParams, Modifier, Node, Primitive, PrimitiveNode } from "./types";
 
-// Label record derived from the primitive registry so adding a new kind
-// doesn't need a parallel update here.
+// Label records derived from the registries so adding a new kind doesn't
+// need a parallel update here.
 export const PRIMITIVE_LABELS = Object.fromEntries(
   (Object.keys(PRIMITIVES_RUNTIME) as PrimitiveKind[]).map((k) => [k, PRIMITIVES_RUNTIME[k].label]),
 ) as Record<PrimitiveKind, string>;
 
-export const MODIFIER_LABELS: Record<ModifierKind, string> = {
-  linearRepeat: "Linear repeat",
-  radialRepeat: "Radial repeat",
-  gridRepeat: "Grid repeat",
-  mirror: "Mirror",
-  scatter: "Scatter",
-  colorCycle: "Color cycle",
-  clip: "Clip",
-  boolean: "Boolean",
-};
+export const MODIFIER_LABELS = Object.fromEntries(
+  (Object.keys(MODIFIERS_RUNTIME) as ModifierKind[]).map((k) => [k, MODIFIERS_RUNTIME[k].label]),
+) as Record<ModifierKind, string>;
 
 export { PRIMITIVE_KINDS } from "./primitives/runtime-registry";
-
-export const MODIFIER_KINDS: ModifierKind[] = [
-  "linearRepeat",
-  "radialRepeat",
-  "gridRepeat",
-  "mirror",
-  "scatter",
-  "colorCycle",
-  "clip",
-  "boolean",
-];
+export { MODIFIER_KINDS } from "./modifiers/runtime-registry";
 
 const DEFAULT_W = 800;
 const DEFAULT_H = 800;
@@ -72,102 +45,10 @@ export function makePrimitive(kind: PrimitiveKind): Primitive {
 export function makeModifier(
   kind: ModifierKind,
   id: number,
-  center: { x: number; y: number } = { x: CENTER, y: CENTER },
+  center: { x: number; y: number } = CENTER_POINT,
 ): Modifier {
-  switch (kind) {
-    case "linearRepeat":
-      return {
-        id,
-        kind,
-        enabled: true,
-        params: {
-          count: 3,
-          dx: 30,
-          dy: 0,
-          dRotate: 0,
-          dScale: 0,
-        } satisfies LinearRepeatParams,
-      };
-    case "radialRepeat":
-      return {
-        id,
-        kind,
-        enabled: true,
-        params: {
-          count: 4,
-          cx: center.x,
-          cy: center.y,
-          arc: 360,
-        } satisfies RadialRepeatParams,
-      };
-    case "gridRepeat":
-      return {
-        id,
-        kind,
-        enabled: true,
-        params: {
-          countX: 4,
-          countY: 4,
-          dx: 80,
-          dy: 80,
-          staggerY: 0,
-          cellRotate: 0,
-        } satisfies GridRepeatParams,
-      };
-    case "mirror":
-      return {
-        id,
-        kind,
-        enabled: true,
-        params: { axis: "y", center: center.x } satisfies MirrorParams,
-      };
-    case "scatter":
-      return {
-        id,
-        kind,
-        enabled: true,
-        params: {
-          offsetX: 20,
-          offsetY: 20,
-          rotation: 15,
-          scale: 0.1,
-          seed: 1,
-        } satisfies ScatterParams,
-      };
-    case "colorCycle":
-      return {
-        id,
-        kind,
-        enabled: true,
-        params: {
-          colors: [...DEFAULT_PALETTE.slice(0, 4)],
-          mode: "cycle",
-          seed: 1,
-          affect: "fill",
-        } satisfies ColorCycleParams,
-      };
-    case "clip":
-      return {
-        id,
-        kind,
-        enabled: true,
-        params: {
-          shape: "ellipse",
-          cx: center.x,
-          cy: center.y,
-          w: 500,
-          h: 500,
-          invert: false,
-        } satisfies ClipParams,
-      };
-    case "boolean":
-      return {
-        id,
-        kind,
-        enabled: true,
-        params: { op: "subtract", targetNodeId: null, hideTarget: true },
-      };
-  }
+  const m = modifierFor(kind);
+  return { id, kind, enabled: true, params: m.defaults(center) } as Modifier;
 }
 
 let _nodeId = 1;

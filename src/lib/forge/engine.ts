@@ -8,7 +8,7 @@
 // primitive registry (`primitives/runtime-registry.ts`). This module
 // consults the registry rather than switching on `primitive.kind`.
 
-import { computeBooleanPath, instancesToSvgFragment } from "./boolean";
+import { modifierFor } from "./modifiers/runtime-registry";
 import { primitiveFor } from "./primitives/runtime-registry";
 import type { Modifier, Node, Primitive, PrimitiveNode } from "./types";
 
@@ -201,137 +201,18 @@ function applyModifier(
   allNodes: readonly Node[],
   pivot: { x: number; y: number },
 ): Instance[] {
-  const nodeId = node.id;
-  switch (mod.kind) {
-    case "linearRepeat": {
-      const out: Instance[] = [];
-      const n = Math.max(1, Math.floor(mod.params.count));
-      for (const inst of instances) {
-        for (let i = 0; i < n; i++) {
-          const angle = i * mod.params.dRotate;
-          const s = 1 + i * mod.params.dScale * 0.01;
-          const t = `translate(${i * mod.params.dx} ${i * mod.params.dy}) rotate(${angle} ${pivot.x} ${pivot.y}) translate(${pivot.x} ${pivot.y}) scale(${s}) translate(${-pivot.x} ${-pivot.y})`;
-          out.push({ ...inst, transform: composeTransform(inst.transform, t) });
-        }
-      }
-      return out;
-    }
-    case "radialRepeat": {
-      const out: Instance[] = [];
-      const n = Math.max(1, Math.floor(mod.params.count));
-      for (const inst of instances) {
-        for (let i = 0; i < n; i++) {
-          const angle = (i / n) * mod.params.arc;
-          const t = `rotate(${angle} ${mod.params.cx} ${mod.params.cy})`;
-          out.push({ ...inst, transform: composeTransform(inst.transform, t) });
-        }
-      }
-      return out;
-    }
-    case "gridRepeat": {
-      const out: Instance[] = [];
-      const nx = Math.max(1, Math.floor(mod.params.countX));
-      const ny = Math.max(1, Math.floor(mod.params.countY));
-      // Center the grid on the pivot so adding a grid doesn't fling the
-      // shape into the corner.
-      const offsetX = -((nx - 1) * mod.params.dx) / 2;
-      const offsetY = -((ny - 1) * mod.params.dy) / 2;
-      for (const inst of instances) {
-        for (let j = 0; j < ny; j++) {
-          for (let i = 0; i < nx; i++) {
-            const stagger = j % 2 === 1 ? mod.params.staggerY : 0;
-            const tx = offsetX + i * mod.params.dx + stagger;
-            const ty = offsetY + j * mod.params.dy;
-            const angle = (i + j) * mod.params.cellRotate;
-            const t = `translate(${tx} ${ty}) rotate(${angle} ${pivot.x} ${pivot.y})`;
-            out.push({ ...inst, transform: composeTransform(inst.transform, t) });
-          }
-        }
-      }
-      return out;
-    }
-    case "mirror": {
-      const out: Instance[] = [];
-      const { axis, center } = mod.params;
-      const reflect =
-        axis === "x"
-          ? `translate(0 ${2 * center}) scale(1 -1)`
-          : `translate(${2 * center} 0) scale(-1 1)`;
-      for (const inst of instances) {
-        out.push(inst);
-        out.push({ ...inst, transform: composeTransform(inst.transform, reflect) });
-      }
-      return out;
-    }
-    case "scatter": {
-      // Adds per-instance random offset/rotation/scale to existing instances.
-      // Doesn't multiply count — operates on whatever's already been produced.
-      return instances.map((inst, i) => {
-        const r1 = hashSigned(mod.params.seed, i * 4 + 0);
-        const r2 = hashSigned(mod.params.seed, i * 4 + 1);
-        const r3 = hashSigned(mod.params.seed, i * 4 + 2);
-        const r4 = hashSigned(mod.params.seed, i * 4 + 3);
-        const dx = r1 * mod.params.offsetX;
-        const dy = r2 * mod.params.offsetY;
-        const dAngle = r3 * mod.params.rotation;
-        const s = 1 + r4 * mod.params.scale;
-        const t = `translate(${dx.toFixed(3)} ${dy.toFixed(3)}) rotate(${dAngle.toFixed(3)} ${pivot.x} ${pivot.y}) translate(${pivot.x} ${pivot.y}) scale(${s.toFixed(4)}) translate(${-pivot.x} ${-pivot.y})`;
-        return { ...inst, transform: composeTransform(inst.transform, t) };
-      });
-    }
-    case "colorCycle": {
-      const colors = mod.params.colors;
-      if (colors.length === 0) return instances;
-      return instances.map((inst, i) => {
-        const idx =
-          mod.params.mode === "random"
-            ? Math.floor(hash(mod.params.seed, i) * colors.length)
-            : i % colors.length;
-        const c = colors[idx];
-        const next: Instance = { ...inst };
-        if (mod.params.affect === "fill" || mod.params.affect === "both") next.fill = c;
-        if (mod.params.affect === "stroke" || mod.params.affect === "both") next.stroke = c;
-        return next;
-      });
-    }
-    case "clip": {
-      const id = `clip-${nodeId}-${clipDefs.length}`;
-      clipDefs.push({ id, ...mod.params });
-      return instances.map((inst) => ({ ...inst, clipPathId: id }));
-    }
-    case "boolean": {
-      if (mod.params.targetNodeId == null) return instances;
-      const target = allNodes.find((n) => n.id === mod.params.targetNodeId);
-      if (!target || target.id === node.id) return instances;
-      // A = this node's primitive applied through every instance accumulated
-      //     so far in this stack.
-      // B = the target node's full expansion (all of its own modifiers).
-      const targetExpanded = expandNode(target, allNodes);
-      const selfSvg = instancesToSvgFragment(instances);
-      const targetSvg = instancesToSvgFragment(targetExpanded.instances);
-      const d = computeBooleanPath(selfSvg, targetSvg, mod.params.op);
-      if (!d) return instances;
-      // The result is one merged path. Collapse instances to a single
-      // identity-transform instance so subsequent modifiers (repeats,
-      // scatter, etc.) operate on the boolean output. Inherit style from
-      // the first existing instance so the merged path is drawn in the
-      // same fill the user picked for the originating node.
-      const first = instances[0];
-      return [
-        {
-          primitive:
-            first?.primitive ??
-            (node.kind === "primitive"
-              ? node.primitive
-              : { kind: "rect", params: { cx: 0, cy: 0, w: 0, h: 0, rx: 0 } }),
-          transform: "",
-          fill: first?.fill ?? "#000000",
-          stroke: first?.stroke ?? "none",
-          strokeWidth: first?.strokeWidth ?? 0,
-          opacity: first?.opacity ?? 1,
-          pathOverride: d,
-        },
-      ];
-    }
-  }
+  // Registry lookup replaces the 8-arm switch. The modifier module owns
+  // its own apply logic; the engine just supplies a context bag of
+  // helpers (compose, hash, recursive expansion, mutable clipDefs).
+  const m = modifierFor(mod.kind);
+  return m.apply(instances, mod.params as never, {
+    node,
+    allNodes,
+    pivot,
+    composeTransform,
+    hash,
+    hashSigned,
+    expandNode,
+    clipDefs,
+  });
 }

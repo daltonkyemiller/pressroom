@@ -10,12 +10,15 @@ import type {
   PrimitiveKind,
   PrimitiveParamsByKind,
 } from "./primitives/runtime-registry";
+import type {
+  ModifierKind,
+  ModifierParamsByKind,
+} from "./modifiers/runtime-registry";
 
 export type Id = number;
 
-// Re-exports so existing call sites (forge-app, controls, prefabs, export)
-// can keep importing param types from "./types" instead of digging into
-// the registry's per-kind folders.
+// Re-exports so existing call sites can keep importing param types from
+// "./types" instead of digging into the registry's per-kind folders.
 export type { RectParams } from "./primitives/rect/runtime";
 export type { EllipseParams } from "./primitives/ellipse/runtime";
 export type { BarStackParams } from "./primitives/barStack/runtime";
@@ -25,79 +28,28 @@ export type { TextParams } from "./primitives/text/runtime";
 export type { SvgParams } from "./primitives/svg/runtime";
 export type { PrimitiveKind } from "./primitives/runtime-registry";
 
+export type { LinearRepeatParams } from "./modifiers/linearRepeat/runtime";
+export type { RadialRepeatParams } from "./modifiers/radialRepeat/runtime";
+export type { GridRepeatParams } from "./modifiers/gridRepeat/runtime";
+export type { MirrorParams } from "./modifiers/mirror/runtime";
+export type { ScatterParams } from "./modifiers/scatter/runtime";
+export type { ColorCycleParams } from "./modifiers/colorCycle/runtime";
+export type { ClipParams } from "./modifiers/clip/runtime";
+export type { BooleanParams } from "./modifiers/boolean/runtime";
+export type { ModifierKind } from "./modifiers/runtime-registry";
+
 export type Primitive = {
   [K in PrimitiveKind]: { kind: K; params: PrimitiveParamsByKind[K] };
 }[PrimitiveKind];
 
-// ---------- Modifiers ----------
-export type LinearRepeatParams = {
-  count: number;
-  dx: number;
-  dy: number;
-  dRotate: number; // degrees added per step
-  dScale: number; // multiplicative scale delta per step (0 = no change)
-};
-export type RadialRepeatParams = {
-  count: number;
-  cx: number;
-  cy: number;
-  arc: number; // total degrees swept (360 = full circle)
-};
-export type GridRepeatParams = {
-  countX: number;
-  countY: number;
-  dx: number;
-  dy: number;
-  staggerY: number; // x-offset added to odd rows (brick pattern when > 0)
-  cellRotate: number; // degrees added per cell index (i + j)
-};
-export type MirrorParams = {
-  axis: "x" | "y";
-  center: number;
-};
-export type ScatterParams = {
-  offsetX: number; // max abs random x offset
-  offsetY: number; // max abs random y offset
-  rotation: number; // max abs random rotation in degrees
-  scale: number; // 0..1 — random scale variation (1 ± scale)
-  seed: number;
-};
-export type ColorCycleParams = {
-  colors: string[]; // explicit color list; bypass when empty (no override)
-  mode: "cycle" | "random"; // cycle = i mod n, random = seeded random pick
-  seed: number;
-  affect: "fill" | "stroke" | "both";
-};
-export type ClipParams = {
-  shape: "rect" | "ellipse";
-  cx: number;
-  cy: number;
-  w: number;
-  h: number;
-  invert: boolean;
-};
-export type BooleanParams = {
-  op: "union" | "subtract" | "intersect" | "exclude";
-  targetNodeId: number | null; // when null, the modifier is a no-op
-  // When true (default), the target node is skipped during the doc render so
-  // its geometry only appears via the boolean result. Otherwise the target
-  // would draw on top of the boolean output and visually mask the effect —
-  // e.g. subtracting a small circle from a bigger one produces a ring, but
-  // the small circle redrawing on top fills the ring's hole right back in.
-  hideTarget: boolean;
-};
-
-export type Modifier =
-  | { id: Id; kind: "linearRepeat"; enabled: boolean; params: LinearRepeatParams }
-  | { id: Id; kind: "radialRepeat"; enabled: boolean; params: RadialRepeatParams }
-  | { id: Id; kind: "gridRepeat"; enabled: boolean; params: GridRepeatParams }
-  | { id: Id; kind: "mirror"; enabled: boolean; params: MirrorParams }
-  | { id: Id; kind: "scatter"; enabled: boolean; params: ScatterParams }
-  | { id: Id; kind: "colorCycle"; enabled: boolean; params: ColorCycleParams }
-  | { id: Id; kind: "clip"; enabled: boolean; params: ClipParams }
-  | { id: Id; kind: "boolean"; enabled: boolean; params: BooleanParams };
-
-export type ModifierKind = Modifier["kind"];
+export type Modifier = {
+  [K in ModifierKind]: {
+    id: Id;
+    kind: K;
+    enabled: boolean;
+    params: ModifierParamsByKind[K];
+  };
+}[ModifierKind];
 
 // ---------- Node + Doc ----------
 // A node is either a primitive (one shape with style + modifier stack) or

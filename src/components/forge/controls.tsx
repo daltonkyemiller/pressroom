@@ -1,5 +1,5 @@
 import { useState, useSyncExternalStore } from "react";
-import { IconPlus, IconXmark } from "nucleo-pixel";
+import { IconPlus } from "nucleo-pixel";
 import {
   listFonts,
   loadLocalFonts,
@@ -7,35 +7,19 @@ import {
 } from "@/lib/forge/font-registry";
 import {
   ColorControl,
-  SegControl,
   SliderControl,
   ToggleControl,
 } from "@/components/dither/controls";
 import { ColorPicker } from "@/components/dither/color-picker";
-import { LinkedSliders } from "@/components/forge/linked-sliders";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { primitiveControlsFor } from "@/lib/forge/primitives/controls-registry";
+import { modifierControlsFor } from "@/lib/forge/modifiers/controls-registry";
 import type {
-  BooleanParams,
-  ClipParams,
-  ColorCycleParams,
   GrainParams,
-  GridRepeatParams,
-  LinearRepeatParams,
-  MirrorParams,
   Modifier,
   Node as ForgeNode,
   Primitive,
-  RadialRepeatParams,
-  ScatterParams,
 } from "@/lib/forge/types";
 
 type Patch = (patch: Record<string, unknown>) => void;
@@ -72,6 +56,9 @@ function useFontList() {
 
 // ---------- Modifiers ----------
 
+// Per-kind controls live next to their runtime modules at
+// `src/lib/forge/modifiers/<kind>/controls.tsx`. The registry lookup
+// replaces the 8-arm switch that used to live here.
 export function ModifierControls({
   modifier,
   palette,
@@ -85,309 +72,15 @@ export function ModifierControls({
   currentNodeId: number;
   onPatch: Patch;
 }) {
-  switch (modifier.kind) {
-    case "linearRepeat":
-      return <LinearRepeatControls params={modifier.params} onPatch={onPatch} />;
-    case "radialRepeat":
-      return <RadialRepeatControls params={modifier.params} onPatch={onPatch} />;
-    case "gridRepeat":
-      return <GridRepeatControls params={modifier.params} onPatch={onPatch} />;
-    case "mirror":
-      return <MirrorControls params={modifier.params} onPatch={onPatch} />;
-    case "scatter":
-      return <ScatterControls params={modifier.params} onPatch={onPatch} />;
-    case "colorCycle":
-      return <ColorCycleControls params={modifier.params} palette={palette} onPatch={onPatch} />;
-    case "clip":
-      return <ClipControls params={modifier.params} onPatch={onPatch} />;
-    case "boolean":
-      return (
-        <BooleanControls
-          params={modifier.params}
-          nodes={nodes}
-          currentNodeId={currentNodeId}
-          onPatch={onPatch}
-        />
-      );
-  }
-}
-
-function LinearRepeatControls({ params, onPatch }: { params: LinearRepeatParams; onPatch: Patch }) {
+  const Controls = modifierControlsFor(modifier.kind);
   return (
-    <>
-      <SliderControl name="count" min={1} max={60} value={params.count} onChange={(v) => onPatch({ count: v })} />
-      <LinkedSliders
-        aName="step x"
-        bName="step y"
-        aValue={params.dx}
-        bValue={params.dy}
-        min={-500}
-        max={500}
-        onChange={(dx, dy) => onPatch({ dx, dy })}
-      />
-      <SliderControl name="rotate / step" min={-180} max={180} value={params.dRotate} unit="°" onChange={(v) => onPatch({ dRotate: v })} />
-      <SliderControl name="scale / step" min={-50} max={50} value={params.dScale} unit="%" onChange={(v) => onPatch({ dScale: v })} />
-    </>
-  );
-}
-
-function RadialRepeatControls({ params, onPatch }: { params: RadialRepeatParams; onPatch: Patch }) {
-  return (
-    <>
-      <SliderControl name="count" min={1} max={60} value={params.count} onChange={(v) => onPatch({ count: v })} />
-      <SliderControl name="arc" min={0} max={360} value={params.arc} unit="°" onChange={(v) => onPatch({ arc: v })} />
-      <SliderControl name="center x" min={-2000} max={2000} value={params.cx} onChange={(v) => onPatch({ cx: v })} />
-      <SliderControl name="center y" min={-2000} max={2000} value={params.cy} onChange={(v) => onPatch({ cy: v })} />
-    </>
-  );
-}
-
-function GridRepeatControls({ params, onPatch }: { params: GridRepeatParams; onPatch: Patch }) {
-  return (
-    <>
-      <LinkedSliders
-        aName="count x"
-        bName="count y"
-        aValue={params.countX}
-        bValue={params.countY}
-        min={1}
-        max={30}
-        onChange={(countX, countY) =>
-          onPatch({ countX: Math.round(countX), countY: Math.round(countY) })
-        }
-      />
-      <LinkedSliders
-        aName="spacing x"
-        bName="spacing y"
-        aValue={params.dx}
-        bValue={params.dy}
-        min={0}
-        max={500}
-        defaultLinked
-        onChange={(dx, dy) => onPatch({ dx, dy })}
-      />
-      <SliderControl name="row stagger" min={-500} max={500} value={params.staggerY} onChange={(v) => onPatch({ staggerY: v })} />
-      <SliderControl name="rotate / cell" min={-180} max={180} value={params.cellRotate} unit="°" onChange={(v) => onPatch({ cellRotate: v })} />
-    </>
-  );
-}
-
-function MirrorControls({ params, onPatch }: { params: MirrorParams; onPatch: Patch }) {
-  return (
-    <>
-      <SegControl
-        name="axis"
-        value={params.axis}
-        options={[
-          { value: "x", label: "horizontal" },
-          { value: "y", label: "vertical" },
-        ]}
-        onChange={(v) => onPatch({ axis: v })}
-      />
-      <SliderControl
-        name={params.axis === "x" ? "y line" : "x line"}
-        min={-2000}
-        max={2000}
-        value={params.center}
-        onChange={(v) => onPatch({ center: v })}
-      />
-    </>
-  );
-}
-
-function ScatterControls({ params, onPatch }: { params: ScatterParams; onPatch: Patch }) {
-  return (
-    <>
-      <LinkedSliders
-        aName="offset x"
-        bName="offset y"
-        aValue={params.offsetX}
-        bValue={params.offsetY}
-        min={0}
-        max={500}
-        defaultLinked
-        onChange={(offsetX, offsetY) => onPatch({ offsetX, offsetY })}
-      />
-      <SliderControl name="rotation" min={0} max={180} value={params.rotation} unit="°" onChange={(v) => onPatch({ rotation: v })} />
-      <SliderControl name="scale" min={0} max={1} step={0.02} value={params.scale} onChange={(v) => onPatch({ scale: v })} />
-      <SliderControl name="seed" min={0} max={9999} value={params.seed} onChange={(v) => onPatch({ seed: v })} />
-    </>
-  );
-}
-
-function ColorCycleControls({
-  params,
-  palette,
-  onPatch,
-}: {
-  params: ColorCycleParams;
-  palette: string[];
-  onPatch: Patch;
-}) {
-  const updateColor = (i: number, c: string) => {
-    const next = [...params.colors];
-    next[i] = c;
-    onPatch({ colors: next });
-  };
-  const removeColor = (i: number) => {
-    onPatch({ colors: params.colors.filter((_, idx) => idx !== i) });
-  };
-  const addColor = () => {
-    onPatch({ colors: [...params.colors, palette[0] ?? "#ffffff"] });
-  };
-  const usePalette = () => {
-    onPatch({ colors: [...palette] });
-  };
-  return (
-    <>
-      <SegControl
-        name="mode"
-        value={params.mode}
-        options={[
-          { value: "cycle", label: "cycle" },
-          { value: "random", label: "random" },
-        ]}
-        onChange={(v) => onPatch({ mode: v })}
-      />
-      <SegControl
-        name="affect"
-        value={params.affect}
-        options={[
-          { value: "fill", label: "fill" },
-          { value: "stroke", label: "stroke" },
-          { value: "both", label: "both" },
-        ]}
-        onChange={(v) => onPatch({ affect: v })}
-      />
-      {params.mode === "random" && (
-        <SliderControl name="seed" min={0} max={9999} value={params.seed} onChange={(v) => onPatch({ seed: v })} />
-      )}
-      <div className="mb-2">
-        <div className="mb-1.5 flex items-center justify-between">
-          <span className="text-xs tracking-wider text-muted-foreground uppercase">colors</span>
-          <button
-            type="button"
-            onClick={usePalette}
-            className="text-xs text-muted-foreground hover:text-foreground uppercase tracking-wider"
-          >
-            use palette
-          </button>
-        </div>
-        <div className="flex flex-col gap-1">
-          {params.colors.map((c, i) => (
-            <div key={i} className="flex items-center gap-1">
-              <ColorPicker value={c} onChange={(v) => updateColor(i, v)} />
-              <button
-                type="button"
-                onClick={() => removeColor(i)}
-                className="flex size-5 items-center justify-center border border-border hover:border-destructive hover:bg-destructive hover:text-background"
-              >
-                <IconXmark className="size-2.5" />
-              </button>
-            </div>
-          ))}
-          <button
-            type="button"
-            onClick={addColor}
-            className="mt-1 flex items-center justify-center gap-1 border border-dashed border-border px-2 py-1 text-xs tracking-wider uppercase hover:bg-muted"
-          >
-            <IconPlus className="size-3" /> add color
-          </button>
-        </div>
-      </div>
-    </>
-  );
-}
-
-function BooleanControls({
-  params,
-  nodes,
-  currentNodeId,
-  onPatch,
-}: {
-  params: BooleanParams;
-  nodes: ForgeNode[];
-  currentNodeId: number;
-  onPatch: Patch;
-}) {
-  const targets = nodes.filter((n) => n.id !== currentNodeId);
-  return (
-    <>
-      <SegControl
-        name="op"
-        value={params.op}
-        options={[
-          { value: "union", label: "union" },
-          { value: "subtract", label: "subtract" },
-          { value: "intersect", label: "intersect" },
-          { value: "exclude", label: "exclude" },
-        ]}
-        onChange={(v) => onPatch({ op: v })}
-      />
-      <div className="mb-2">
-        <span className="mb-1.5 block text-xs tracking-wider text-muted-foreground uppercase">
-          target node
-        </span>
-        <Select
-          value={params.targetNodeId != null ? String(params.targetNodeId) : ""}
-          onValueChange={(v) => onPatch({ targetNodeId: v ? Number(v) : null })}
-        >
-          <SelectTrigger className="w-full">
-            <SelectValue placeholder="— pick a node —" />
-          </SelectTrigger>
-          <SelectContent>
-            {targets.map((n) => (
-              <SelectItem key={n.id} value={String(n.id)}>
-                #{n.id} · {n.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {targets.length === 0 && (
-          <p className="mt-1 text-[11px] italic text-muted-foreground">
-            add a second node to use as the boolean operand
-          </p>
-        )}
-      </div>
-      <ToggleControl
-        name="hide target node"
-        value={params.hideTarget}
-        onChange={(v) => onPatch({ hideTarget: v })}
-      />
-    </>
-  );
-}
-
-function ClipControls({ params, onPatch }: { params: ClipParams; onPatch: Patch }) {
-  return (
-    <>
-      <SegControl
-        name="shape"
-        value={params.shape}
-        options={[
-          { value: "ellipse", label: "ellipse" },
-          { value: "rect", label: "rect" },
-        ]}
-        onChange={(v) => onPatch({ shape: v })}
-      />
-      <SliderControl name="center x" min={-2000} max={2000} value={params.cx} onChange={(v) => onPatch({ cx: v })} />
-      <SliderControl name="center y" min={-2000} max={2000} value={params.cy} onChange={(v) => onPatch({ cy: v })} />
-      <LinkedSliders
-        aName="width"
-        bName="height"
-        aValue={params.w}
-        bValue={params.h}
-        min={0}
-        max={4000}
-        defaultLinked
-        onChange={(w, h) => onPatch({ w, h })}
-      />
-      <ToggleControl
-        name="invert (keep outside)"
-        value={params.invert}
-        onChange={(v) => onPatch({ invert: v })}
-      />
-    </>
+    <Controls
+      params={modifier.params as never}
+      palette={palette}
+      nodes={nodes}
+      currentNodeId={currentNodeId}
+      onPatch={onPatch}
+    />
   );
 }
 

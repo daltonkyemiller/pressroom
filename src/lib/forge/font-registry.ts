@@ -1,74 +1,69 @@
-// Runtime font registry for the forge tool. Holds:
-//   1. Built-in fonts shipped from /public/font — preloaded as soon as
-//      forge mounts so the default text primitive renders and booleans
-//      against text work without ceremony.
-//   2. Fonts the user pulls in via window.queryLocalFonts() — only listed
-//      until first use, then their bytes are fetched on demand, parsed
-//      with opentype.js, and an @font-face is injected so the rendered
-//      <text> uses the right glyphs.
-//
-// Components can subscribe() to re-render whenever a font becomes ready.
-// Everything is keyed by font-family (the CSS value), which is also what
-// gets stored on the text primitive's `font` field.
+// Forge's text-primitive font surface — a thin layer over the shared
+// font registry (`src/lib/fonts/registry.ts`, see ADR-0002). The shared
+// module owns discovery (queryLocalFonts + dedup), the family list, the
+// React subscribe / snapshot, and the bytes cache. This file adds the
+// forge-specific piece: parsing the bytes with opentype.js so boolean
+// modifiers can extract glyph outlines, and injecting an @font-face for
+// the live SVG <text> rendering.
 
 import opentype from "opentype.js";
+import {
+  getFontBytes,
+  isLocalFontsSupported as sharedIsLocalFontsSupported,
+  listFonts as sharedListFonts,
+  loadLocalFonts as sharedLoadLocalFonts,
+  registerBuiltIn,
+  subscribeFonts as sharedSubscribeFonts,
+  type SharedFontEntry,
+} from "../fonts/registry";
 
-export type FontSource = "built-in" | "local";
+export type { FontSource } from "../fonts/registry";
 
-export type FontEntry = {
-  family: string; // CSS font-family value, used as the registry key
-  source: FontSource;
-  // Parsed opentype representation. null while loading; remains null if
-  // parsing fails (e.g. WOFF2 — opentype.js doesn't handle WOFF2).
+// boolean.ts and text/runtime.ts read `entry.font`; existing callers
+// expect the parsed opentype representation on the entry.
+export type FontEntry = SharedFontEntry & {
   font: opentype.Font | null;
-  // For local fonts, used to refetch the blob lazily via queryLocalFonts.
-  postscriptName?: string;
-  // Whether the @font-face has already been injected for display rendering.
-  faceInjected?: boolean;
+  faceInjected: boolean;
 };
 
-const registry = new Map<string, FontEntry>();
-const listeners = new Set<() => void>();
+const opentypeFonts = new Map<string, opentype.Font>();
+const faceInjected = new Set<string>();
 
-// Cached snapshot for useSyncExternalStore consumers. React requires
-// getSnapshot to return the same reference between notifies, otherwise it
-// thinks state changed every render and loops. We invalidate on notify
-// and rebuild on demand.
-let snapshotCache: FontEntry[] | null = null;
+export const subscribeFonts = sharedSubscribeFonts;
+export const isLocalFontsSupported = sharedIsLocalFontsSupported;
+export const loadLocalFonts = sharedLoadLocalFonts;
 
-function notify() {
-  snapshotCache = null;
-  for (const l of listeners) l();
-}
-
-export function subscribeFonts(cb: () => void): () => void {
-  listeners.add(cb);
-  return () => {
-    listeners.delete(cb);
-  };
+export function listFonts(): FontEntry[] {
+  return sharedListFonts().map((e) => ({
+    ...e,
+    font: opentypeFonts.get(e.family) ?? null,
+    faceInjected: faceInjected.has(e.family) || e.source === "built-in",
+  }));
 }
 
 export function getFontEntry(family: string): FontEntry | undefined {
-  return registry.get(family);
-}
-
-export function listFonts(): FontEntry[] {
-  if (snapshotCache === null) {
-    snapshotCache = Array.from(registry.values()).sort((a, b) =>
-      a.family.localeCompare(b.family),
-    );
+  const opentypeFont = opentypeFonts.get(family);
+  // Built-ins are listed eagerly via registerBuiltIn — for them we can
+  // synthesize an entry even before getFontBytes runs. For local fonts
+  // we need the shared registry to know about them.
+  if (opentypeFont || sharedListFonts().some((e) => e.family === family)) {
+    const shared = sharedListFonts().find((e) => e.family === family);
+    if (!shared) return undefined;
+    return {
+      ...shared,
+      font: opentypeFont ?? null,
+      faceInjected: faceInjected.has(family) || shared.source === "built-in",
+    };
   }
-  return snapshotCache;
+  return undefined;
 }
-
-// ---------- Built-ins ----------
 
 const BUILT_INS: Array<{ family: string; url: string }> = [
   { family: "Mondwest", url: "/font/ppmondwest-regular.otf" },
   { family: "Neue Bit", url: "/font/ppneuebit-bold.otf" },
-  // Geist Pixel files are WOFF2; opentype.js can't parse them so they're
-  // listed but won't boolean. Display-only is fine — the @font-face is
-  // already in styles.css.
+  // Geist Pixel is WOFF2; opentype.js can't parse it, so booleans
+  // against it will no-op. Display still works because the @font-face
+  // lives in styles.css.
   { family: "Geist Pixel", url: "/font/GeistPixel-Square.woff2" },
 ];
 
@@ -76,115 +71,44 @@ let initStarted = false;
 export async function initBuiltInFonts(): Promise<void> {
   if (initStarted) return;
   initStarted = true;
-  // Register all entries upfront so the font picker sees them immediately.
-  for (const b of BUILT_INS) {
-    if (!registry.has(b.family)) {
-      registry.set(b.family, {
-        family: b.family,
-        source: "built-in",
-        font: null,
-        faceInjected: true, // already in styles.css
-      });
-    }
-  }
-  notify();
+  for (const b of BUILT_INS) registerBuiltIn(b.family, b.url);
   await Promise.all(
     BUILT_INS.map(async (b) => {
       try {
-        const buf = await fetch(b.url).then((r) => r.arrayBuffer());
-        const font = opentype.parse(buf);
-        const entry = registry.get(b.family);
-        if (entry) entry.font = font;
+        const cached = await getFontBytes(b.family);
+        if (!cached) return;
+        const font = opentype.parse(cached.buffer);
+        opentypeFonts.set(b.family, font);
       } catch {
-        // WOFF2 / network error — entry stays with font=null and just won't
-        // participate in booleans. Display still works because the
-        // @font-face was injected via the CSS already.
+        // WOFF2 / network error — leave the entry with font=null; it
+        // just won't participate in booleans. Display still works.
       }
     }),
   );
-  notify();
 }
 
-// ---------- Local fonts (queryLocalFonts API) ----------
-
-type LocalFontData = {
-  family: string;
-  fullName: string;
-  postscriptName: string;
-  style: string;
-  blob: () => Promise<Blob>;
-};
-
-// Has to be called as a method on window — detaching it into a local
-// reference loses `this` and the call silently no-ops (or throws
-// "Illegal invocation" depending on the build).
-type WindowWithLocalFonts = Window & {
-  queryLocalFonts: (options?: {
-    postscriptNames?: string[];
-  }) => Promise<LocalFontData[]>;
-};
-
-function hasLocalFonts(): boolean {
-  return typeof window !== "undefined" && "queryLocalFonts" in window;
-}
-
-export function isLocalFontsSupported(): boolean {
-  return hasLocalFonts();
-}
-
-// Asks the browser for the list of system fonts. Throws "NotAllowedError"
-// if the user denied permission. Adds one entry per family — multiple
-// faces of the same family get collapsed.
-export async function loadLocalFonts(): Promise<number> {
-  if (!hasLocalFonts()) return 0;
-  const fonts = await (window as unknown as WindowWithLocalFonts).queryLocalFonts();
-  let added = 0;
-  const seenFamilies = new Set<string>();
-  for (const fd of fonts) {
-    if (seenFamilies.has(fd.family)) continue;
-    seenFamilies.add(fd.family);
-    if (registry.has(fd.family)) continue;
-    registry.set(fd.family, {
-      family: fd.family,
-      source: "local",
-      font: null,
-      postscriptName: fd.postscriptName,
-    });
-    added += 1;
-  }
-  notify();
-  return added;
-}
-
-// Lazy-load the actual font data for a local font. Called when:
-//   - The font is selected for a text primitive (so display + booleans work)
-//   - A boolean operation needs glyph outlines
-// Re-entry is safe: returns the cached font if already loaded.
+// Lazy-load the parsed opentype font for a registered family. Called
+// when the text primitive's font is selected (for display) and when a
+// boolean operation needs glyph outlines. Re-entry is safe.
 export async function ensureFontLoaded(
   family: string,
 ): Promise<opentype.Font | null> {
-  const entry = registry.get(family);
-  if (!entry) return null;
-  if (entry.font) return entry.font;
-  if (entry.source !== "local" || !entry.postscriptName) return null;
-  if (!hasLocalFonts()) return null;
+  const cached = opentypeFonts.get(family);
+  if (cached) return cached;
+  const bytes = await getFontBytes(family);
+  if (!bytes) return null;
   try {
-    const matches = await (window as unknown as WindowWithLocalFonts).queryLocalFonts({
-      postscriptNames: [entry.postscriptName],
-    });
-    if (matches.length === 0) return null;
-    const blob = await matches[0].blob();
-    const buf = await blob.arrayBuffer();
-    const font = opentype.parse(buf);
-    entry.font = font;
-    if (!entry.faceInjected) {
-      const url = URL.createObjectURL(blob);
+    const font = opentype.parse(bytes.buffer);
+    opentypeFonts.set(family, font);
+    // Inject @font-face for live display rendering (local fonts only —
+    // built-ins are already in styles.css).
+    if (!faceInjected.has(family) && typeof document !== "undefined") {
+      const url = URL.createObjectURL(bytes.blob);
       const style = document.createElement("style");
-      style.textContent = `@font-face { font-family: "${entry.family.replace(/"/g, "\\\"")}"; src: url(${url}); }`;
+      style.textContent = `@font-face { font-family: "${family.replace(/"/g, '\\"')}"; src: url(${url}); }`;
       document.head.appendChild(style);
-      entry.faceInjected = true;
+      faceInjected.add(family);
     }
-    notify();
     return font;
   } catch (err) {
     console.warn("forge: ensureFontLoaded failed for", family, err);

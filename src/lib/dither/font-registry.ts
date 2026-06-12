@@ -1,36 +1,46 @@
-// Pressroom font registry — used by the Text effect.
-//
-// Built-in fonts (Mondwest / Neue Bit / Geist Pixel) already get an
-// @font-face declaration via styles.css, so the document and the live
-// preview can render them out of the box. The worker, however, runs in a
-// separate context with its own `self.fonts` set, so we have to load the
-// font bytes there too before OffscreenCanvas can draw with them.
-//
-// Local fonts come from window.queryLocalFonts() (Chrome / Edge / other
-// Chromium). When the user picks one, we fetch its bytes, register the
-// FontFace against the document so the live preview can use it, AND ship
-// the bytes to the worker so OffscreenCanvas in the worker can use it too.
+// Pressroom's Text-effect font surface — a thin layer over the shared
+// font registry (`src/lib/fonts/registry.ts`, see ADR-0002). The shared
+// module owns discovery (queryLocalFonts + dedup), the family list,
+// React subscribe / snapshot, and the bytes cache. This file adds the
+// pressroom-specific piece: shipping the bytes to the dither worker via
+// the `setWorkerFontRegistrar` hook so OffscreenCanvas in the worker
+// can render with them.
 
-export type FontSource = "built-in" | "local";
+import {
+  getFontBytes,
+  isLocalFontsSupported as sharedIsLocalFontsSupported,
+  listFonts as sharedListFonts,
+  loadLocalFonts as sharedLoadLocalFonts,
+  registerBuiltIn,
+  subscribeFonts as sharedSubscribeFonts,
+  type SharedFontEntry,
+} from "../fonts/registry";
 
-export type FontEntry = {
-  family: string;
-  source: FontSource;
-  // Populated lazily for local fonts; built-ins resolve to the URL we
-  // already know about.
-  postscriptName?: string;
-  // Tracks whether the worker already has this font registered. Avoids
-  // shipping bytes more than once.
+export type { FontSource } from "../fonts/registry";
+
+// Pressroom callers used to read `entry.workerLoaded` and `source`. Keep
+// the shape they expect — listFonts() is just the shared list (no new
+// data).
+export type FontEntry = SharedFontEntry & {
   workerLoaded: boolean;
 };
 
-const registry = new Map<string, FontEntry>();
-const listeners = new Set<() => void>();
-let snapshotCache: FontEntry[] | null = null;
+// Per-family worker-loaded tracker. Internal to this module — the shared
+// registry doesn't need to know whether each tool has shipped its bytes
+// somewhere.
+const workerLoaded = new Set<string>();
 
-// Pluggable hook: the worker registration handler. Wired by pipeline.ts
-// when it creates the worker. If unset (e.g. before the first render), we
-// fall back to fetching+registering against document.fonts only.
+export const subscribeFonts = sharedSubscribeFonts;
+export const isLocalFontsSupported = sharedIsLocalFontsSupported;
+export const loadLocalFonts = sharedLoadLocalFonts;
+
+export function listFonts(): FontEntry[] {
+  const shared = sharedListFonts();
+  // Map view: same length, same order. React snapshot stability is
+  // delegated to the shared registry — we just decorate each entry.
+  return shared.map((e) => ({ ...e, workerLoaded: workerLoaded.has(e.family) }));
+}
+
 let workerRegisterFont:
   | ((family: string, bytes: ArrayBuffer) => Promise<void>)
   | null = null;
@@ -40,29 +50,6 @@ export function setWorkerFontRegistrar(
 ) {
   workerRegisterFont = fn;
 }
-
-function notify() {
-  snapshotCache = null;
-  for (const l of listeners) l();
-}
-
-export function subscribeFonts(cb: () => void): () => void {
-  listeners.add(cb);
-  return () => {
-    listeners.delete(cb);
-  };
-}
-
-export function listFonts(): FontEntry[] {
-  if (snapshotCache === null) {
-    snapshotCache = Array.from(registry.values()).sort((a, b) =>
-      a.family.localeCompare(b.family),
-    );
-  }
-  return snapshotCache;
-}
-
-// ---------- Built-ins ----------
 
 const BUILT_INS: Array<{ family: string; url: string }> = [
   { family: "Mondwest", url: "/font/ppmondwest-regular.otf" },
@@ -74,115 +61,42 @@ let initStarted = false;
 export async function initBuiltInFonts(): Promise<void> {
   if (initStarted) return;
   initStarted = true;
-  for (const b of BUILT_INS) {
-    if (!registry.has(b.family)) {
-      registry.set(b.family, {
-        family: b.family,
-        source: "built-in",
-        workerLoaded: false,
-      });
-    }
-  }
-  notify();
-  // Eagerly ship each font's bytes to the worker so the Text effect can
-  // start rendering with them on the first frame.
+  for (const b of BUILT_INS) registerBuiltIn(b.family, b.url);
+  // Eagerly ship each built-in's bytes to the worker so the Text effect
+  // can start rendering on the first frame.
   await Promise.all(
     BUILT_INS.map(async (b) => {
       try {
-        const buf = await fetch(b.url).then((r) => r.arrayBuffer());
+        const cached = await getFontBytes(b.family);
+        if (!cached) return;
         const reg = workerRegisterFont;
-        if (reg) await reg(b.family, buf.slice(0));
-        const entry = registry.get(b.family);
-        if (entry) entry.workerLoaded = true;
+        if (reg) await reg(b.family, cached.buffer.slice(0));
+        workerLoaded.add(b.family);
       } catch (err) {
-        console.warn("forge: built-in font fetch failed", b.family, err);
+        console.warn("pressroom: built-in font ship failed", b.family, err);
       }
     }),
   );
-  notify();
 }
 
-// ---------- Local fonts ----------
-
-type LocalFontData = {
-  family: string;
-  fullName: string;
-  postscriptName: string;
-  style: string;
-  blob: () => Promise<Blob>;
-};
-
-type WindowWithLocalFonts = Window & {
-  queryLocalFonts: (options?: {
-    postscriptNames?: string[];
-  }) => Promise<LocalFontData[]>;
-};
-
-function hasLocalFonts(): boolean {
-  return typeof window !== "undefined" && "queryLocalFonts" in window;
-}
-
-export function isLocalFontsSupported(): boolean {
-  return hasLocalFonts();
-}
-
-export async function loadLocalFonts(): Promise<number> {
-  if (!hasLocalFonts()) return 0;
-  const fonts = await (window as unknown as WindowWithLocalFonts).queryLocalFonts();
-  let added = 0;
-  const seen = new Set<string>();
-  for (const fd of fonts) {
-    if (seen.has(fd.family)) continue;
-    seen.add(fd.family);
-    if (registry.has(fd.family)) continue;
-    registry.set(fd.family, {
-      family: fd.family,
-      source: "local",
-      postscriptName: fd.postscriptName,
-      workerLoaded: false,
-    });
-    added += 1;
-  }
-  notify();
-  return added;
-}
-
-// Lazily fetch a local font's bytes and register the FontFace with both
-// document.fonts (so the live <canvas> preview text on the main thread
-// uses the right glyphs) and the worker (so the OffscreenCanvas inside
-// the pipeline does too).
+// Lazily fetch a font's bytes, inject an @font-face for the live preview,
+// and ship the bytes to the worker so OffscreenCanvas in the pipeline can
+// render with them.
 export async function ensureFontLoaded(family: string): Promise<boolean> {
-  const entry = registry.get(family);
-  if (!entry) return false;
-  if (entry.workerLoaded) return true;
-  if (entry.source === "built-in") {
-    // Built-ins are loaded eagerly in initBuiltInFonts; if we're here the
-    // initial load is still in flight — just wait a tick. The slider will
-    // re-render once the load resolves.
-    return false;
-  }
-  if (!entry.postscriptName) return false;
-  if (!hasLocalFonts()) return false;
-  try {
-    const matches = await (window as unknown as WindowWithLocalFonts).queryLocalFonts({
-      postscriptNames: [entry.postscriptName],
-    });
-    if (matches.length === 0) return false;
-    const blob = await matches[0].blob();
-    const buf = await blob.arrayBuffer();
-    // Inject @font-face on the document for live preview rendering.
-    const url = URL.createObjectURL(blob);
+  if (workerLoaded.has(family)) return true;
+  const cached = await getFontBytes(family);
+  if (!cached) return false;
+  // Inject @font-face on the document for live preview rendering. Only
+  // needed for local fonts — built-ins already have an @font-face in
+  // styles.css.
+  if (typeof document !== "undefined") {
+    const url = URL.createObjectURL(cached.blob);
     const style = document.createElement("style");
-    style.textContent = `@font-face { font-family: "${entry.family.replace(/"/g, '\\"')}"; src: url(${url}); }`;
+    style.textContent = `@font-face { font-family: "${family.replace(/"/g, '\\"')}"; src: url(${url}); }`;
     document.head.appendChild(style);
-    // Ship the bytes to the worker.
-    const reg = workerRegisterFont;
-    if (reg) await reg(entry.family, buf.slice(0));
-    entry.workerLoaded = true;
-    notify();
-    return true;
-  } catch (err) {
-    console.warn("pressroom: ensureFontLoaded failed for", family, err);
-    return false;
   }
+  const reg = workerRegisterFont;
+  if (reg) await reg(family, cached.buffer.slice(0));
+  workerLoaded.add(family);
+  return true;
 }

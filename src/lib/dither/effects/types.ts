@@ -31,6 +31,16 @@ export type EffectModule<K extends string, P> = {
   /** Optional WebGL adapter. When present, runStack batches adjacent
    *  GPU-adaptered layers into a single ping-pong run. */
   gpu?: GpuEffect<P>;
+  /** Scale px-dimensioned params for a different render resolution.
+   *  Preview renders at MAX_DIM=900; export renders at source res with
+   *  `scale = sourceWidth / previewWidth`. Effects with no px-dimensioned
+   *  params can omit this — the pipeline defaults to identity.
+   *
+   *  This is the WYSIWYG mechanism: a halftone with `size=8` at the 900px
+   *  preview occupies the same fraction of the canvas as `size=8*scale`
+   *  at source res, so the export reads as the same composition with
+   *  more fidelity (and without the upscale grid artifact). */
+  scaleParams?: (params: P, scale: number) => P;
 };
 
 /** Props every controls component receives from the layer card. */

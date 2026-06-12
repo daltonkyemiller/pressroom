@@ -114,4 +114,7 @@ export const riso: EffectModule<"riso", RisoParams> = {
   },
   summarize: (p) =>
     `t${p.threshold1}/${p.threshold2} · off ${p.offset2}px · g${p.grain1}/${p.grain2}`,
+  // offset1 / offset2 are per-ink misregistration distances in px.
+  // Everything else is colors, thresholds (%), grain (%), softness, seed.
+  scaleParams: (p, s) => ({ ...p, offset1: p.offset1 * s, offset2: p.offset2 * s }),
 };

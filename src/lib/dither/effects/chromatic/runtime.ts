@@ -61,4 +61,6 @@ export const chromatic: EffectModule<"chromatic", ChromaticParams> = {
     return img;
   },
   summarize: (p) => `${p.amount}px · ${p.mode === "radial" ? "radial" : `${p.angle}°`}`,
+  // amount = px shift between R and B channels.
+  scaleParams: (p, s) => ({ ...p, amount: p.amount * s }),
 };

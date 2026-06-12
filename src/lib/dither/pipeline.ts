@@ -1,4 +1,4 @@
-import { runStack, type Layer } from "./effects";
+import { runStack, scaleLayers, type Layer } from "./effects";
 import { setWorkerFontRegistrar } from "./font-registry";
 
 export type RenderResult = {
@@ -149,20 +149,38 @@ export function exportPNG(
   layers: readonly Layer[],
   maxDim: number,
 ): Promise<Blob | null> {
-  // Run the whole effect stack at the same working resolution as the
-  // preview so the export is WYSIWYG. Resolution-dependent effects
-  // (halftone dots, dither patterns, grain, edge bleed, displace) look
-  // completely different at full source res than they do in the 900px
-  // preview, so matching resolution is the only way to keep parity.
-  // Then nearest-neighbor upscale to source dims so the exported file
-  // keeps its original size — each effect-pixel becomes a clean block.
-  const { imgData, width, height } = renderPipeline(source, layers, maxDim);
-  const work = new OffscreenCanvas(width, height);
-  work.getContext("2d")!.putImageData(imgData, 0, 0);
+  // WYSIWYG export at source resolution.
+  //
+  // Earlier versions rendered the stack at the 900px preview res and
+  // nearest-neighbor upscaled to source dims. That kept the visual
+  // proportions matching the preview but turned every effect pixel into
+  // a several-pixel block — the visible grid artifact in big exports.
+  //
+  // Now: render at full source resolution, but scale each effect's
+  // px-dimensioned params by `sourceWidth / previewWidth` so visual
+  // proportions still match the preview. A halftone with size=8 at the
+  // 900px preview becomes size=8*scale at export — same fraction of the
+  // canvas, with proper pixel-level fidelity.
+  //
+  // The renamed parameter is `maxDim`: it's still the preview cap,
+  // referenced here to compute the scale factor — we don't render the
+  // export against it.
+  const previewDims = computeWorkDims(source, maxDim);
+  const scale = source.width / previewDims.width;
+
+  // Rasterize the source at its NATIVE size. Smoothing on so the source
+  // texture itself isn't aliased — the stack handles its own sampling.
+  const work = new OffscreenCanvas(source.width, source.height);
+  const ctx = work.getContext("2d", { willReadFrequently: true })!;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(source, 0, 0, source.width, source.height);
+  const initial = ctx.getImageData(0, 0, source.width, source.height);
+
+  const scaled = scaleLayers(layers, scale);
+  const imgData = runStack(initial, scaled);
 
   const out = new OffscreenCanvas(source.width, source.height);
-  const ctx = out.getContext("2d")!;
-  ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(work, 0, 0, source.width, source.height);
+  out.getContext("2d")!.putImageData(imgData, 0, 0);
   return out.convertToBlob({ type: "image/png" }).catch(() => null);
 }

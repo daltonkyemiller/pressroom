@@ -13,4 +13,5 @@ export const blur: EffectModule<"blur", BlurParams> = {
     return img;
   },
   summarize: (p) => `radius ${p.radius}`,
+  scaleParams: (p, s) => ({ radius: p.radius * s }),
 };

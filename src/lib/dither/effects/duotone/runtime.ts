@@ -11,4 +11,7 @@ export const duotone: EffectModule<"duotone", DuotoneParams> = {
   apply: applyDuotoneShader,
   summarize: (p) =>
     `${p.tile}px · t${p.thickness.toFixed(2)} · ×${p.lengthScale.toFixed(2)}`,
+  // tile = capsule cell pitch (px), blurRadius = pre-blur (px).
+  // thickness/lengthScale are ratios, contrast/brightness are intensities.
+  scaleParams: (p, s) => ({ ...p, tile: p.tile * s, blurRadius: p.blurRadius * s }),
 };

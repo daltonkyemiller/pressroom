@@ -51,4 +51,7 @@ export const displace: EffectModule<"displace", DisplaceParams> = {
     return img;
   },
   summarize: (p) => `${p.amount}px · scale ${p.scale} · oct ${p.octaves}`,
+  // amount = max displacement (px), scale = noise cell size (px).
+  // octaves and seed are integer counts; strength is %.
+  scaleParams: (p, s) => ({ ...p, amount: p.amount * s, scale: p.scale * s }),
 };

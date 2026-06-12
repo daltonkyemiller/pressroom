@@ -97,6 +97,23 @@ export function summarizeLayer(layer: Layer): string {
   return fx.summarize(layer.params as never);
 }
 
+// Return a copy of `layers` with each layer's px-dimensioned params
+// multiplied by `scale`. Used for the export path, which renders at the
+// source resolution instead of the 900px preview — see ADR/comments on
+// pipeline.ts:exportPNG. Effects without a `scaleParams` method are
+// resolution-independent and pass through unchanged.
+export function scaleLayers(layers: readonly Layer[], scale: number): Layer[] {
+  if (scale === 1) return layers as Layer[];
+  return layers.map((layer) => {
+    const fx = effectFor(layer.kind);
+    if (!fx.scaleParams) return layer;
+    return {
+      ...layer,
+      params: fx.scaleParams(layer.params as never, scale) as never,
+    } as Layer;
+  });
+}
+
 // Adjacent GPU layers are batched into a single ping-pong run so the
 // source is uploaded once and read back once. CPU layers interleave
 // naturally — the batch flushes whenever a CPU layer is encountered.

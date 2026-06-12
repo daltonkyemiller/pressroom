@@ -14,4 +14,8 @@ export const grain: EffectModule<"grain", GrainParams> = {
       p.colorAmount > 0 ? ` · ${p.colorAmount === 100 ? "color" : `c${p.colorAmount}`}` : "";
     return `${p.amount} · ${p.size.toFixed(1)}px${colorTag}`;
   },
+  // size is the grain feature size in px; amount/roughness/aspect/
+  // shadows/highlights/falloff/colorAmount/tintStrength are intensities
+  // or aspect ratios.
+  scaleParams: (p, s) => ({ ...p, size: p.size * s }),
 };

@@ -209,4 +209,8 @@ export const dither: EffectModule<"dither", DitherParams> = {
     return img;
   },
   summarize: (p) => `${p.algo} · ${p.palette}`,
+  // preBlur is px-dimensioned. matrixScale is a luminance amplitude
+  // (16..128 on the Bayer matrix), not a px size — leave untouched.
+  // jitter, strength, diffusion are all percentages.
+  scaleParams: (p, s) => ({ ...p, preBlur: p.preBlur * s }),
 };

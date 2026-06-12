@@ -17,4 +17,5 @@ export const progressiveBlur: EffectModule<"progressiveBlur", ProgressiveBlurPar
     const dir = p.direction === "radial" ? "radial" : `${p.angle}°`;
     return `${dir} · max ${p.maxRadius}px${p.invert ? " · inv" : ""}`;
   },
+  scaleParams: (p, s) => ({ ...p, maxRadius: p.maxRadius * s }),
 };

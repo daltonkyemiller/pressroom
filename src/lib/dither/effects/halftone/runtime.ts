@@ -151,4 +151,7 @@ export const halftone: EffectModule<"halftone", HalftoneParams> = {
   },
   summarize: (p) =>
     `${p.shape} · ${p.size}px · ${p.angle}°${p.goo > 0 ? ` · goo ${p.goo}` : ""}`,
+  // size is the cell pitch in px; everything else (angle, spread%, goo,
+  // palette, preserveColors) is resolution-independent.
+  scaleParams: (p, s) => ({ ...p, size: p.size * s }),
 };

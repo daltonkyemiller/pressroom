@@ -67,4 +67,12 @@ export const edgeBleed: EffectModule<"edgeBleed", EdgeBleedParams> = {
   },
   summarize: (p) =>
     `${p.amount}px · ${p.polarity === "spread-dark" ? "dark→" : "light→"} · j${p.jitter}`,
+  // amount = spread radius (px), scale = noise feature size (px),
+  // feather = post-blur (px). jitter/strength are %; seed is an integer.
+  scaleParams: (p, s) => ({
+    ...p,
+    amount: p.amount * s,
+    scale: p.scale * s,
+    feather: p.feather * s,
+  }),
 };

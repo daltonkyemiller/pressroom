@@ -251,4 +251,19 @@ export const text: EffectModule<"text", TextParams> = {
     const trimmed = p.content.length > 14 ? `${p.content.slice(0, 14)}…` : p.content;
     return `"${trimmed}" · ${p.size}px`;
   },
+  // Almost everything here is px-dimensioned (the glyph metrics, the
+  // bleed pipeline kernels). x/y are %-of-canvas, rotation is degrees,
+  // scale is a multiplier, opacity/threshold/thresholdSoftness are
+  // intensities, content/font/align/vAlign/bold/italic/color/seed are
+  // discrete or color values — none of those scale.
+  scaleParams: (p, s) => ({
+    ...p,
+    size: p.size * s,
+    letterSpacing: p.letterSpacing * s,
+    blur: p.blur * s,
+    dilate: p.dilate * s,
+    displace: p.displace * s,
+    displaceScale: p.displaceScale * s,
+    dustScale: p.dustScale * s,
+  }),
 };

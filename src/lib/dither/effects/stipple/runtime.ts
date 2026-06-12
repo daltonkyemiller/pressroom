@@ -94,4 +94,12 @@ export const stipple: EffectModule<"stipple", StippleParams> = {
   },
   summarize: (p) =>
     `d${p.density} · ${p.minSize.toFixed(1)}–${p.maxSize.toFixed(1)}px · j${p.jitter}`,
+  // density = grid pitch (px), minSize/maxSize = dot radii (px).
+  // threshold and jitter are %; seed is an integer.
+  scaleParams: (p, s) => ({
+    ...p,
+    density: p.density * s,
+    minSize: p.minSize * s,
+    maxSize: p.maxSize * s,
+  }),
 };

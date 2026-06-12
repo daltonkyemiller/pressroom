@@ -29,33 +29,46 @@ export type FontEntry = SharedFontEntry & {
 const opentypeFonts = new Map<string, opentype.Font>();
 const faceInjected = new Set<string>();
 
-export const subscribeFonts = sharedSubscribeFonts;
+// Local snapshot cache. The shared listFonts() caches its own array,
+// but our wrapper `.map()`s a new one per call — without a local cache,
+// useSyncExternalStore sees a fresh reference each render and loops.
+// We rebuild when the shared list changes (ref compare) or when local
+// state changes (`notifyLocal()`).
+let cachedList: FontEntry[] | null = null;
+let cachedSharedRef: SharedFontEntry[] | null = null;
+const localListeners = new Set<() => void>();
+
+function notifyLocal() {
+  cachedList = null;
+  for (const l of localListeners) l();
+}
+
 export const isLocalFontsSupported = sharedIsLocalFontsSupported;
 export const loadLocalFonts = sharedLoadLocalFonts;
 
+export function subscribeFonts(cb: () => void): () => void {
+  const unsubShared = sharedSubscribeFonts(cb);
+  localListeners.add(cb);
+  return () => {
+    unsubShared();
+    localListeners.delete(cb);
+  };
+}
+
 export function listFonts(): FontEntry[] {
-  return sharedListFonts().map((e) => ({
+  const shared = sharedListFonts();
+  if (cachedList !== null && shared === cachedSharedRef) return cachedList;
+  cachedSharedRef = shared;
+  cachedList = shared.map((e) => ({
     ...e,
     font: opentypeFonts.get(e.family) ?? null,
     faceInjected: faceInjected.has(e.family) || e.source === "built-in",
   }));
+  return cachedList;
 }
 
 export function getFontEntry(family: string): FontEntry | undefined {
-  const opentypeFont = opentypeFonts.get(family);
-  // Built-ins are listed eagerly via registerBuiltIn — for them we can
-  // synthesize an entry even before getFontBytes runs. For local fonts
-  // we need the shared registry to know about them.
-  if (opentypeFont || sharedListFonts().some((e) => e.family === family)) {
-    const shared = sharedListFonts().find((e) => e.family === family);
-    if (!shared) return undefined;
-    return {
-      ...shared,
-      font: opentypeFont ?? null,
-      faceInjected: faceInjected.has(family) || shared.source === "built-in",
-    };
-  }
-  return undefined;
+  return listFonts().find((e) => e.family === family);
 }
 
 const BUILT_INS: Array<{ family: string; url: string }> = [
@@ -79,6 +92,7 @@ export async function initBuiltInFonts(): Promise<void> {
         if (!cached) return;
         const font = opentype.parse(cached.buffer);
         opentypeFonts.set(b.family, font);
+        notifyLocal();
       } catch {
         // WOFF2 / network error — leave the entry with font=null; it
         // just won't participate in booleans. Display still works.
@@ -109,6 +123,7 @@ export async function ensureFontLoaded(
       document.head.appendChild(style);
       faceInjected.add(family);
     }
+    notifyLocal();
     return font;
   } catch (err) {
     console.warn("forge: ensureFontLoaded failed for", family, err);

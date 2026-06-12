@@ -30,15 +30,43 @@ export type FontEntry = SharedFontEntry & {
 // somewhere.
 const workerLoaded = new Set<string>();
 
-export const subscribeFonts = sharedSubscribeFonts;
+// Local snapshot cache. The shared registry caches its own snapshot, but
+// our wrapper `.map()`s a new array on every call — without a local
+// cache, useSyncExternalStore sees a fresh reference each render and
+// loops infinitely. We rebuild only when the shared list changes
+// (reference compare) or our local state changes (`notifyLocal()`).
+let cachedList: FontEntry[] | null = null;
+let cachedSharedRef: SharedFontEntry[] | null = null;
+// Forward both shared and local notifications to React subscribers so
+// changes to either side trigger a re-render.
+const localListeners = new Set<() => void>();
+
+function notifyLocal() {
+  cachedList = null;
+  for (const l of localListeners) l();
+}
+
 export const isLocalFontsSupported = sharedIsLocalFontsSupported;
 export const loadLocalFonts = sharedLoadLocalFonts;
 
+export function subscribeFonts(cb: () => void): () => void {
+  const unsubShared = sharedSubscribeFonts(cb);
+  localListeners.add(cb);
+  return () => {
+    unsubShared();
+    localListeners.delete(cb);
+  };
+}
+
 export function listFonts(): FontEntry[] {
   const shared = sharedListFonts();
-  // Map view: same length, same order. React snapshot stability is
-  // delegated to the shared registry — we just decorate each entry.
-  return shared.map((e) => ({ ...e, workerLoaded: workerLoaded.has(e.family) }));
+  if (cachedList !== null && shared === cachedSharedRef) return cachedList;
+  cachedSharedRef = shared;
+  cachedList = shared.map((e) => ({
+    ...e,
+    workerLoaded: workerLoaded.has(e.family),
+  }));
+  return cachedList;
 }
 
 let workerRegisterFont:
@@ -72,6 +100,7 @@ export async function initBuiltInFonts(): Promise<void> {
         const reg = workerRegisterFont;
         if (reg) await reg(b.family, cached.buffer.slice(0));
         workerLoaded.add(b.family);
+        notifyLocal();
       } catch (err) {
         console.warn("pressroom: built-in font ship failed", b.family, err);
       }
@@ -98,5 +127,6 @@ export async function ensureFontLoaded(family: string): Promise<boolean> {
   const reg = workerRegisterFont;
   if (reg) await reg(family, cached.buffer.slice(0));
   workerLoaded.add(family);
+  notifyLocal();
   return true;
 }

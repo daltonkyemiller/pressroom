@@ -24,6 +24,7 @@ import {
   EFFECT_DESCRIPTIONS,
   EFFECT_KINDS,
   EFFECT_LABELS,
+  scaleLayers,
   type EffectKind,
   type Layer,
 } from "@/lib/dither/effects";
@@ -31,11 +32,33 @@ import { computeWorkDims, exportPNG, renderPipelineAsync } from "@/lib/dither/pi
 import { initBuiltInFonts } from "@/lib/dither/font-registry";
 import type { Edge } from "@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge";
 
-// Working resolution for both interactive preview and final commit — keeping
-// them identical means scale-sensitive effects (halftone, dither, duotone)
-// look the same while scrubbing as they do when released. Export still
-// runs at the source's native resolution via renderForExport.
-const MAX_DIM = 900;
+// All effect params are authored against this reference resolution.
+// Saved presets, clipboard payloads, and slider defaults all use it as
+// the implicit unit — a halftone with `size: 8` means "8/900 of the
+// working width." Anything that renders at a different resolution
+// (the export at source res, the preview at display×DPR) scales the
+// params via `scaleLayers(layers, renderDim / REFERENCE_DIM)`.
+const REFERENCE_DIM = 900;
+// Hard ceiling on preview render resolution. Effects are O(pixels) and
+// dither's serpentine error diffusion is the slowest path — capping
+// here keeps scrubbing responsive on high-DPR Retina monitors. Bump
+// for a sharper preview at the cost of scrub FPS.
+const MAX_PREVIEW_DIM = 1800;
+
+// Display-aware preview render dim. We want the canvas's pixel grid to
+// match the actual physical display pixels (CSS × DPR) at zoom 1.0 so
+// the browser doesn't downsample — `image-rendering: pixelated` is
+// great at upscale but produces sharp aliasing on a regular dither
+// pattern when the browser shrinks the canvas to fit a smaller viewport
+// (that's the grid artifact you see in preview but not in zoomed-in
+// view). Floored at REFERENCE_DIM so we never RENDER smaller than the
+// dim params are authored against.
+function computePreviewRenderDim(displayDims: { width: number; height: number }): number {
+  const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
+  const longestDisplay = Math.max(displayDims.width, displayDims.height);
+  const target = Math.max(REFERENCE_DIM, Math.round(longestDisplay * dpr));
+  return Math.min(MAX_PREVIEW_DIM, target);
+}
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 16;
 
@@ -80,14 +103,20 @@ export default function App() {
   const nextIdRef = useRef(3);
   const rafIdRef = useRef<number | null>(null);
   const pendingRef = useRef(false);
+  // Mirror of canvasDisplayDims so the render closure can read the
+  // current display size without taking it as a useCallback dep (which
+  // would re-create the closure on every resize and thrash the rAF
+  // scheduler).
+  const displayDimsRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
   // ---------- render ----------
   const render = useCallback(
     async (original = false) => {
       const canvas = canvasRef.current;
       if (!canvas || !sourceImage) return;
       const t0 = performance.now();
+      const previewDim = computePreviewRenderDim(displayDimsRef.current);
       if (original) {
-        const dims = computeWorkDims(sourceImage, MAX_DIM);
+        const dims = computeWorkDims(sourceImage, previewDim);
         canvas.width = dims.width;
         canvas.height = dims.height;
         const c = canvas.getContext("2d")!;
@@ -98,7 +127,19 @@ export default function App() {
         setStatusDim(`${dims.width} × ${dims.height}`);
         return;
       }
-      const { imgData, width, height } = await renderPipelineAsync(sourceImage, layers, MAX_DIM);
+      // Render at previewDim with each layer's params scaled from the
+      // reference dim so visual proportions stay identical to the
+      // authored values. Without this, halftone size=8 at 1500px
+      // preview would suddenly look smaller relative to the canvas
+      // than the user set it.
+      const work = computeWorkDims(sourceImage, previewDim);
+      const previewScale = work.width / REFERENCE_DIM;
+      const scaled = scaleLayers(layers, previewScale);
+      const { imgData, width, height } = await renderPipelineAsync(
+        sourceImage,
+        scaled,
+        previewDim,
+      );
       canvas.width = width;
       canvas.height = height;
       canvas.getContext("2d", { willReadFrequently: true })!.putImageData(imgData, 0, 0);
@@ -415,7 +456,7 @@ export default function App() {
   // ---------- export ----------
   const onExport = useCallback(async () => {
     if (!sourceImage) return;
-    const blob = await exportPNG(sourceImage, layers, MAX_DIM);
+    const blob = await exportPNG(sourceImage, layers, REFERENCE_DIM);
     if (!blob) return;
     const link = document.createElement("a");
     link.download = `dither-stack-${Date.now()}.png`;
@@ -485,7 +526,7 @@ export default function App() {
     const labelRoom = 40; // top labels
     const availW = Math.max(120, stageSize.w - padding);
     const availH = Math.max(120, stageSize.h - padding - labelRoom);
-    if (availW === 0 || availH === 0) return computeWorkDims(sourceImage, MAX_DIM);
+    if (availW === 0 || availH === 0) return computeWorkDims(sourceImage, REFERENCE_DIM);
     const ratio = sourceImage.width / sourceImage.height;
     let w = availW;
     let h = w / ratio;
@@ -495,6 +536,20 @@ export default function App() {
     }
     return { width: Math.round(w), height: Math.round(h) };
   }, [sourceImage, stageSize]);
+
+  // Mirror current display dims into the render-closure-readable ref,
+  // and re-render when the corresponding preview dim changes by enough
+  // to be worth it. The "worth it" threshold avoids re-rendering on
+  // every 1px resize tick while still picking up real window changes.
+  useEffect(() => {
+    displayDimsRef.current = canvasDisplayDims;
+    if (!sourceImage) return;
+    const nextDim = computePreviewRenderDim(canvasDisplayDims);
+    const currentCanvasDim = canvasRef.current?.width ?? 0;
+    if (Math.abs(nextDim - currentCanvasDim) > REFERENCE_DIM * 0.05) {
+      scheduleRender();
+    }
+  }, [canvasDisplayDims, sourceImage, scheduleRender]);
 
   return (
     <div className="relative grid h-full grid-cols-[320px_1fr] font-sans text-sm">

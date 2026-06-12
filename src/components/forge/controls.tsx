@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { IconLink, IconLinkBroken, IconPlus, IconXmark } from "nucleo-pixel";
+import { useState, useSyncExternalStore } from "react";
+import { IconPlus, IconXmark } from "nucleo-pixel";
 import {
-  ensureFontLoaded,
   listFonts,
   loadLocalFonts,
   subscribeFonts,
@@ -13,8 +12,8 @@ import {
   ToggleControl,
 } from "@/components/dither/controls";
 import { ColorPicker } from "@/components/dither/color-picker";
+import { LinkedSliders } from "@/components/forge/linked-sliders";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -23,134 +22,34 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { primitiveControlsFor } from "@/lib/forge/primitives/controls-registry";
 import type {
-  BarStackParams,
   BooleanParams,
   ClipParams,
   ColorCycleParams,
-  EllipseParams,
   GrainParams,
   GridRepeatParams,
   LinearRepeatParams,
   MirrorParams,
   Modifier,
   Node as ForgeNode,
-  PolygonParams,
   Primitive,
   RadialRepeatParams,
-  RectParams,
   ScatterParams,
-  SvgParams,
-  TextParams,
-  WedgeParams,
 } from "@/lib/forge/types";
 
 type Patch = (patch: Record<string, unknown>) => void;
 
-// ---------- Linked slider pair ----------
-// Two number scrubbers with an optional ratio lock between them. While
-// locked, changing one drags the other along so the a/b ratio is preserved.
-// The lock state is local UI state — not persisted in the doc.
-type LinkedSlidersProps = {
-  aName: string;
-  bName: string;
-  aValue: number;
-  bValue: number;
-  min: number;
-  max: number;
-  step?: number;
-  unit?: string;
-  onChange: (a: number, b: number) => void;
-  defaultLinked?: boolean;
-};
-
-export function LinkedSliders({
-  aName,
-  bName,
-  aValue,
-  bValue,
-  min,
-  max,
-  step,
-  unit,
-  onChange,
-  defaultLinked = false,
-}: LinkedSlidersProps) {
-  const [linked, setLinked] = useState(defaultLinked);
-  // Ratio captured at the moment of linking, so changing either side
-  // doesn't slowly drift due to rounding.
-  const ratioRef = useRef<number>(aValue / Math.max(bValue, 1e-6));
-
-  const setA = (next: number) => {
-    if (!linked) {
-      onChange(next, bValue);
-      return;
-    }
-    const r = ratioRef.current;
-    if (!Number.isFinite(r) || r === 0) {
-      onChange(next, bValue);
-      return;
-    }
-    onChange(next, next / r);
-  };
-  const setB = (next: number) => {
-    if (!linked) {
-      onChange(aValue, next);
-      return;
-    }
-    const r = ratioRef.current;
-    if (!Number.isFinite(r)) {
-      onChange(aValue, next);
-      return;
-    }
-    onChange(next * r, next);
-  };
-  const toggleLink = () => {
-    setLinked((l) => {
-      const nextLinked = !l;
-      if (nextLinked) ratioRef.current = aValue / Math.max(bValue, 1e-6);
-      return nextLinked;
-    });
-  };
-
-  return (
-    <div className="mb-2 grid grid-cols-[1fr_auto] items-center gap-1">
-      <div>
-        <SliderControl
-          name={aName}
-          min={min}
-          max={max}
-          step={step}
-          unit={unit}
-          value={aValue}
-          onChange={setA}
-        />
-        <SliderControl
-          name={bName}
-          min={min}
-          max={max}
-          step={step}
-          unit={unit}
-          value={bValue}
-          onChange={setB}
-        />
-      </div>
-      <button
-        type="button"
-        onClick={toggleLink}
-        title={linked ? "unlink ratio" : "lock ratio"}
-        className={cn(
-          "flex size-6 items-center justify-center border border-border transition-colors",
-          linked ? "bg-foreground text-background" : "hover:bg-muted",
-        )}
-      >
-        {linked ? <IconLink className="size-3" /> : <IconLinkBroken className="size-3" />}
-      </button>
-    </div>
-  );
-}
+// Re-export so existing callers can keep importing LinkedSliders from this
+// file. Primitive controls now live next to their runtime modules.
+export { LinkedSliders } from "@/components/forge/linked-sliders";
 
 // ---------- Primitives ----------
+//
+// Per-kind controls now live next to their runtime modules in
+// `src/lib/forge/primitives/<kind>/controls.tsx`. The registry lookup
+// replaces the 7-arm switch that used to live here. The `as never` cast
+// bridges TS's correlated-union limitation.
 
 export function PrimitiveControls({
   primitive,
@@ -159,103 +58,8 @@ export function PrimitiveControls({
   primitive: Primitive;
   onPatch: Patch;
 }) {
-  switch (primitive.kind) {
-    case "rect":
-      return <RectControls params={primitive.params} onPatch={onPatch} />;
-    case "ellipse":
-      return <EllipseControls params={primitive.params} onPatch={onPatch} />;
-    case "barStack":
-      return <BarStackControls params={primitive.params} onPatch={onPatch} />;
-    case "wedge":
-      return <WedgeControls params={primitive.params} onPatch={onPatch} />;
-    case "polygon":
-      return <PolygonControls params={primitive.params} onPatch={onPatch} />;
-    case "text":
-      return <TextControls params={primitive.params} onPatch={onPatch} />;
-    case "svg":
-      return <SvgControls params={primitive.params} onPatch={onPatch} />;
-  }
-}
-
-function RectControls({ params, onPatch }: { params: RectParams; onPatch: Patch }) {
-  return (
-    <>
-      <SliderControl name="center x" min={-2000} max={2000} value={params.cx} onChange={(v) => onPatch({ cx: v })} />
-      <SliderControl name="center y" min={-2000} max={2000} value={params.cy} onChange={(v) => onPatch({ cy: v })} />
-      <LinkedSliders
-        aName="width"
-        bName="height"
-        aValue={params.w}
-        bValue={params.h}
-        min={0}
-        max={2000}
-        onChange={(w, h) => onPatch({ w, h })}
-      />
-      <SliderControl name="corner radius" min={0} max={500} value={params.rx} onChange={(v) => onPatch({ rx: v })} />
-    </>
-  );
-}
-
-function EllipseControls({ params, onPatch }: { params: EllipseParams; onPatch: Patch }) {
-  return (
-    <>
-      <SliderControl name="center x" min={-2000} max={2000} value={params.cx} onChange={(v) => onPatch({ cx: v })} />
-      <SliderControl name="center y" min={-2000} max={2000} value={params.cy} onChange={(v) => onPatch({ cy: v })} />
-      <LinkedSliders
-        aName="radius x"
-        bName="radius y"
-        aValue={params.rx}
-        bValue={params.ry}
-        min={0}
-        max={2000}
-        defaultLinked
-        onChange={(rx, ry) => onPatch({ rx, ry })}
-      />
-    </>
-  );
-}
-
-function BarStackControls({ params, onPatch }: { params: BarStackParams; onPatch: Patch }) {
-  return (
-    <>
-      <SliderControl name="count" min={1} max={60} value={params.count} onChange={(v) => onPatch({ count: v })} />
-      <SliderControl name="width" min={0} max={2000} value={params.width} unit="px" onChange={(v) => onPatch({ width: v })} />
-      <SliderControl name="bar height" min={0.5} max={80} step={0.5} value={params.height} unit="px" onChange={(v) => onPatch({ height: v })} />
-      <SliderControl name="gap" min={0} max={60} value={params.gap} unit="px" onChange={(v) => onPatch({ gap: v })} />
-      <SliderControl name="taper" min={-100} max={100} value={params.taper} onChange={(v) => onPatch({ taper: v })} />
-      <SliderControl name="jitter" min={0} max={100} value={params.jitter} unit="%" onChange={(v) => onPatch({ jitter: v })} />
-      <SliderControl name="seed" min={0} max={9999} value={params.seed} onChange={(v) => onPatch({ seed: v })} />
-      <SliderControl name="rotation" min={0} max={360} value={params.rotation} unit="°" onChange={(v) => onPatch({ rotation: v })} />
-      <SliderControl name="center x" min={-2000} max={2000} value={params.cx} onChange={(v) => onPatch({ cx: v })} />
-      <SliderControl name="center y" min={-2000} max={2000} value={params.cy} onChange={(v) => onPatch({ cy: v })} />
-    </>
-  );
-}
-
-function WedgeControls({ params, onPatch }: { params: WedgeParams; onPatch: Patch }) {
-  return (
-    <>
-      <SliderControl name="center x" min={-2000} max={2000} value={params.cx} onChange={(v) => onPatch({ cx: v })} />
-      <SliderControl name="center y" min={-2000} max={2000} value={params.cy} onChange={(v) => onPatch({ cy: v })} />
-      <SliderControl name="outer radius" min={0} max={2000} value={params.outerRadius} onChange={(v) => onPatch({ outerRadius: v })} />
-      <SliderControl name="inner radius" min={0} max={2000} value={params.innerRadius} onChange={(v) => onPatch({ innerRadius: v })} />
-      <SliderControl name="start angle" min={-360} max={360} value={params.startAngle} unit="°" onChange={(v) => onPatch({ startAngle: v })} />
-      <SliderControl name="sweep" min={-360} max={360} value={params.sweep} unit="°" onChange={(v) => onPatch({ sweep: v })} />
-    </>
-  );
-}
-
-function PolygonControls({ params, onPatch }: { params: PolygonParams; onPatch: Patch }) {
-  return (
-    <>
-      <SliderControl name="center x" min={-2000} max={2000} value={params.cx} onChange={(v) => onPatch({ cx: v })} />
-      <SliderControl name="center y" min={-2000} max={2000} value={params.cy} onChange={(v) => onPatch({ cy: v })} />
-      <SliderControl name="radius" min={0} max={2000} value={params.radius} onChange={(v) => onPatch({ radius: v })} />
-      <SliderControl name="sides" min={3} max={24} value={params.sides} onChange={(v) => onPatch({ sides: v })} />
-      <SliderControl name="star inner" min={0} max={1} step={0.02} value={params.starInner} onChange={(v) => onPatch({ starInner: v })} />
-      <SliderControl name="rotation" min={0} max={360} value={params.rotation} unit="°" onChange={(v) => onPatch({ rotation: v })} />
-    </>
-  );
+  const Controls = primitiveControlsFor(primitive.kind);
+  return <Controls params={primitive.params as never} onPatch={onPatch} />;
 }
 
 function useFontList() {
@@ -263,147 +67,6 @@ function useFontList() {
     subscribeFonts,
     () => listFonts(),
     () => listFonts(),
-  );
-}
-
-function TextControls({ params, onPatch }: { params: TextParams; onPatch: Patch }) {
-  const fonts = useFontList();
-  // Lazy-load font bytes when the user picks a font (so booleans + display
-  // both work for local fonts).
-  useEffect(() => {
-    void ensureFontLoaded(params.font);
-  }, [params.font]);
-  return (
-    <>
-      <div className="mb-2">
-        <span className="mb-1.5 block text-xs tracking-wider text-muted-foreground uppercase">
-          content
-        </span>
-        <Input
-          value={params.content}
-          onChange={(e) => onPatch({ content: e.target.value })}
-        />
-      </div>
-      <div className="mb-3">
-        <span className="mb-1.5 block text-xs tracking-wider text-muted-foreground uppercase">
-          font
-        </span>
-        <Select value={params.font} onValueChange={(v) => onPatch({ font: v })}>
-          <SelectTrigger className="w-full">
-            <SelectValue placeholder="pick a font" />
-          </SelectTrigger>
-          <SelectContent>
-            {fonts.map((f) => (
-              <SelectItem key={f.family} value={f.family}>
-                <span style={{ fontFamily: `"${f.family}", system-ui` }}>
-                  {f.family}
-                </span>
-                {f.source === "local" && (
-                  <span className="ml-2 text-[10px] text-muted-foreground">local</span>
-                )}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-      <SliderControl name="size" min={6} max={800} value={params.size} unit="px" onChange={(v) => onPatch({ size: v })} />
-      <SliderControl name="letter spacing" min={-20} max={60} value={params.letterSpacing} onChange={(v) => onPatch({ letterSpacing: v })} />
-      <SegControl
-        name="anchor"
-        value={params.anchor}
-        options={[
-          { value: "start", label: "start" },
-          { value: "middle", label: "middle" },
-          { value: "end", label: "end" },
-        ]}
-        onChange={(v) => onPatch({ anchor: v })}
-      />
-      <SegControl
-        name="baseline"
-        value={params.baseline}
-        options={[
-          { value: "hanging", label: "top" },
-          { value: "middle", label: "middle" },
-          { value: "alphabetic", label: "base" },
-        ]}
-        onChange={(v) => onPatch({ baseline: v })}
-      />
-      <SliderControl name="center x" min={-2000} max={2000} value={params.cx} onChange={(v) => onPatch({ cx: v })} />
-      <SliderControl name="center y" min={-2000} max={2000} value={params.cy} onChange={(v) => onPatch({ cy: v })} />
-      <SliderControl name="rotation" min={0} max={360} value={params.rotation} unit="°" onChange={(v) => onPatch({ rotation: v })} />
-    </>
-  );
-}
-
-function SvgControls({ params, onPatch }: { params: SvgParams; onPatch: Patch }) {
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [status, setStatus] = useState<string | null>(null);
-
-  const handleFile = (file: File | undefined) => {
-    if (!file) return;
-    if (!/svg/i.test(file.type) && !file.name.toLowerCase().endsWith(".svg")) {
-      setStatus("not an svg file");
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = typeof reader.result === "string" ? reader.result : "";
-      if (text) {
-        onPatch({ content: text });
-        setStatus(`loaded ${file.name}`);
-      }
-    };
-    reader.onerror = () => setStatus("failed to read file");
-    reader.readAsText(file);
-  };
-
-  return (
-    <>
-      <div className="mb-2 flex gap-1">
-        <Button
-          variant="outline"
-          size="sm"
-          className="flex-1"
-          onClick={() => fileRef.current?.click()}
-        >
-          load svg…
-        </Button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".svg,image/svg+xml"
-          className="hidden"
-          onChange={(e) => handleFile(e.target.files?.[0])}
-        />
-      </div>
-      {status && (
-        <p className="mb-2 text-[11px] text-muted-foreground">{status}</p>
-      )}
-      <div className="mb-2">
-        <span className="mb-1.5 block text-xs tracking-wider text-muted-foreground uppercase">
-          svg markup
-        </span>
-        <textarea
-          value={params.content}
-          onChange={(e) => onPatch({ content: e.target.value })}
-          className="border-input bg-muted/30 focus-visible:border-ring focus-visible:ring-ring/50 h-24 w-full resize-y rounded-none border p-2 font-mono text-[11px] outline-none focus-visible:ring-1"
-          spellCheck={false}
-          placeholder="<svg viewBox='0 0 100 100'>…</svg>"
-        />
-      </div>
-      <SliderControl name="center x" min={-2000} max={2000} value={params.cx} onChange={(v) => onPatch({ cx: v })} />
-      <SliderControl name="center y" min={-2000} max={2000} value={params.cy} onChange={(v) => onPatch({ cy: v })} />
-      <LinkedSliders
-        aName="width"
-        bName="height"
-        aValue={params.width}
-        bValue={params.height}
-        min={0}
-        max={4000}
-        defaultLinked
-        onChange={(width, height) => onPatch({ width, height })}
-      />
-    </>
   );
 }
 

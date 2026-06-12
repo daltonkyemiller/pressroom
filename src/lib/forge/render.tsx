@@ -1,12 +1,8 @@
 import { Fragment } from "react";
-import {
-  expandNode,
-  getBooleanHiddenIds,
-  polygonPath,
-  svgPlacementTransform,
-  wedgePath,
-  type ClipDef,
-} from "./engine";
+import { expandNode, getBooleanHiddenIds, type ClipDef } from "./engine";
+import { polygonPath } from "./primitives/polygon/runtime";
+import { wedgePath } from "./primitives/wedge/runtime";
+import { svgPlacementTransform } from "./primitives/svg/runtime";
 import type { Doc, Node, Primitive } from "./types";
 
 // Wrap family names in quotes (CSS-safe for families with spaces), with

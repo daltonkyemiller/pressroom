@@ -3,21 +3,19 @@
 // and optional per-instance fill/stroke/opacity overrides (set by color
 // modifiers). Render then emits one <g> per instance wrapping the base
 // primitive shape.
+//
+// Per-primitive geometry / center / barStack seeding now lives in the
+// primitive registry (`primitives/runtime-registry.ts`). This module
+// consults the registry rather than switching on `primitive.kind`.
 
 import { computeBooleanPath, instancesToSvgFragment } from "./boolean";
-import type {
-  BarStackParams,
-  Modifier,
-  Node,
-  PolygonParams,
-  Primitive,
-  PrimitiveNode,
-} from "./types";
+import { primitiveFor } from "./primitives/runtime-registry";
+import type { Modifier, Node, Primitive, PrimitiveNode } from "./types";
 
-// An Instance now carries a reference to the primitive being rendered AND
-// its resolved style. This lets a group's expansion produce a flat list of
-// instances drawn from MULTIPLE primitives (one per child), each keeping
-// its own fill/stroke. Modifiers operate on the flat list uniformly.
+// An Instance carries a reference to the primitive being rendered AND its
+// resolved style. Groups can produce instances drawn from MULTIPLE
+// primitives (one per child), each keeping its own fill/stroke; modifiers
+// operate on the flat list uniformly.
 export type Instance = {
   primitive: Primitive;
   transform: string;
@@ -61,181 +59,10 @@ export function hashSigned(seed: number, i: number): number {
   return hash(seed, i) * 2 - 1;
 }
 
-// Per-bar transforms for a barStack. Returns partial seeds (just the
-// transform strings) so the caller can mix in style + primitive ref. The
-// primitive renders as ONE base rect; each transform positions/sizes a
-// single bar.
-export function barStackInstances(p: BarStackParams): Array<{ transform: string }> {
-  const out: Array<{ transform: string }> = [];
-  const n = Math.max(1, Math.floor(p.count));
-  const totalH = n * p.height + (n - 1) * p.gap;
-  const topY = p.cy - totalH / 2;
-  for (let i = 0; i < n; i++) {
-    const t = n > 1 ? i / (n - 1) : 0.5;
-    const taperFactor = 1 - (Math.abs(p.taper) / 100) * (p.taper > 0 ? t : 1 - t);
-    let wScale = taperFactor;
-    if (p.jitter > 0) {
-      const r = hash(p.seed, i);
-      wScale *= 1 - r * (p.jitter / 100);
-    }
-    wScale = Math.max(0.001, wScale);
-    // Bar's visual center is (cx, barCenterY). The base rect renders centered
-    // on (cx, cy), so we translate by the y offset and scale x around cx.
-    const barCenterY = topY + i * (p.height + p.gap) + p.height / 2;
-    const dy = barCenterY - p.cy;
-    let transform =
-      `translate(0 ${dy.toFixed(3)}) translate(${p.cx} ${p.cy}) scale(${wScale.toFixed(5)} 1) translate(${-p.cx} ${-p.cy})`;
-    if (p.rotation) {
-      // Apply the stack's overall rotation first (around cx, cy) so the
-      // bars rotate together as a unit.
-      transform = `rotate(${p.rotation} ${p.cx} ${p.cy}) ${transform}`;
-    }
-    out.push({ transform });
-  }
-  return out;
-}
-
-// Build a closed SVG path "d" string for a polygon or star.
-export function polygonPath(p: PolygonParams): string {
-  const sides = Math.max(3, Math.floor(p.sides));
-  const isStar = p.starInner > 0 && p.starInner < 1;
-  const totalPoints = isStar ? sides * 2 : sides;
-  const innerR = isStar ? p.radius * p.starInner : p.radius;
-  const startAngle = (p.rotation - 90) * (Math.PI / 180); // -90 → point up
-  let d = "";
-  for (let i = 0; i < totalPoints; i++) {
-    const angle = startAngle + (i / totalPoints) * Math.PI * 2;
-    const r = isStar ? (i % 2 === 0 ? p.radius : innerR) : p.radius;
-    const x = p.cx + Math.cos(angle) * r;
-    const y = p.cy + Math.sin(angle) * r;
-    d += `${i === 0 ? "M" : "L"}${x.toFixed(3)},${y.toFixed(3)}`;
-  }
-  d += "Z";
-  return d;
-}
-
-// Build a closed wedge path. Handles inner radius > 0 (ring segment) and
-// sweep angles > 180° (uses large-arc-flag).
-export function wedgePath(p: {
-  cx: number;
-  cy: number;
-  outerRadius: number;
-  innerRadius: number;
-  startAngle: number;
-  sweep: number;
-}): string {
-  const startRad = (p.startAngle * Math.PI) / 180;
-  const endRad = ((p.startAngle + p.sweep) * Math.PI) / 180;
-  const ro = Math.max(0, p.outerRadius);
-  const ri = Math.max(0, Math.min(ro, p.innerRadius));
-  const absSweep = Math.abs(p.sweep);
-  const largeArc = absSweep > 180 ? 1 : 0;
-  const sweepFlag = p.sweep >= 0 ? 1 : 0;
-  const ox1 = p.cx + Math.cos(startRad) * ro;
-  const oy1 = p.cy + Math.sin(startRad) * ro;
-  const ox2 = p.cx + Math.cos(endRad) * ro;
-  const oy2 = p.cy + Math.sin(endRad) * ro;
-  if (ri <= 0) {
-    if (absSweep >= 360) {
-      // Full disk
-      return `M${p.cx - ro},${p.cy} A${ro},${ro} 0 1,0 ${p.cx + ro},${p.cy} A${ro},${ro} 0 1,0 ${p.cx - ro},${p.cy} Z`;
-    }
-    return `M${p.cx.toFixed(3)},${p.cy.toFixed(3)} L${ox1.toFixed(3)},${oy1.toFixed(3)} A${ro},${ro} 0 ${largeArc},${sweepFlag} ${ox2.toFixed(3)},${oy2.toFixed(3)} Z`;
-  }
-  const ix1 = p.cx + Math.cos(startRad) * ri;
-  const iy1 = p.cy + Math.sin(startRad) * ri;
-  const ix2 = p.cx + Math.cos(endRad) * ri;
-  const iy2 = p.cy + Math.sin(endRad) * ri;
-  const innerSweepFlag = p.sweep >= 0 ? 0 : 1;
-  if (absSweep >= 360) {
-    // Full annulus = outer circle + inner circle reversed (even-odd fill works
-    // via fill-rule, but using two opposite-direction loops keeps the path
-    // self-contained for non-zero fill rules too).
-    return `M${p.cx - ro},${p.cy} A${ro},${ro} 0 1,0 ${p.cx + ro},${p.cy} A${ro},${ro} 0 1,0 ${p.cx - ro},${p.cy} Z M${p.cx - ri},${p.cy} A${ri},${ri} 0 1,1 ${p.cx + ri},${p.cy} A${ri},${ri} 0 1,1 ${p.cx - ri},${p.cy} Z`;
-  }
-  return `M${ix1.toFixed(3)},${iy1.toFixed(3)} L${ox1.toFixed(3)},${oy1.toFixed(3)} A${ro},${ro} 0 ${largeArc},${sweepFlag} ${ox2.toFixed(3)},${oy2.toFixed(3)} L${ix2.toFixed(3)},${iy2.toFixed(3)} A${ri},${ri} 0 ${largeArc},${innerSweepFlag} ${ix1.toFixed(3)},${iy1.toFixed(3)} Z`;
-}
-
 // Visual center of a primitive — pivot for in-place rotation / scale.
 export function getPrimitiveCenter(p: Primitive): { x: number; y: number } {
-  switch (p.kind) {
-    case "rect":
-      return { x: p.params.cx, y: p.params.cy };
-    case "ellipse":
-      return { x: p.params.cx, y: p.params.cy };
-    case "barStack":
-      return { x: p.params.cx, y: p.params.cy };
-    case "wedge":
-      return { x: p.params.cx, y: p.params.cy };
-    case "polygon":
-      return { x: p.params.cx, y: p.params.cy };
-    case "text":
-      return { x: p.params.cx, y: p.params.cy };
-    case "svg":
-      return { x: p.params.cx, y: p.params.cy };
-  }
-}
-
-// Parse a user-provided SVG string into the viewBox + inner content so
-// the engine can place + scale it via a wrapping <g transform>. Falls
-// back to a 100×100 viewBox if the source is malformed or missing one.
-// Cached by exact content string — parsing the same SVG repeatedly per
-// render would be wasteful for large files.
-type ParsedSvg = { viewBox: [number, number, number, number]; body: string };
-const svgParseCache = new Map<string, ParsedSvg>();
-export function parseSvgContent(content: string): ParsedSvg {
-  const cached = svgParseCache.get(content);
-  if (cached) return cached;
-  let viewBox: [number, number, number, number] = [0, 0, 100, 100];
-  let body = "";
-  try {
-    const doc = new DOMParser().parseFromString(content, "image/svg+xml");
-    const root = doc.documentElement;
-    // parseFromString returns a <parsererror> doc on malformed input.
-    if (root && root.nodeName !== "parsererror") {
-      const vb = root.getAttribute("viewBox");
-      if (vb) {
-        const parts = vb.trim().split(/[\s,]+/).map(Number);
-        if (parts.length === 4 && parts.every((n) => Number.isFinite(n))) {
-          viewBox = [parts[0], parts[1], parts[2], parts[3]];
-        }
-      } else {
-        const w = parseFloat(root.getAttribute("width") || "");
-        const h = parseFloat(root.getAttribute("height") || "");
-        if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
-          viewBox = [0, 0, w, h];
-        }
-      }
-      body = root.innerHTML;
-    }
-  } catch {
-    // Leave defaults; the SVG primitive will render an empty <g>.
-  }
-  const parsed: ParsedSvg = { viewBox, body };
-  if (svgParseCache.size > 64) svgParseCache.clear(); // crude LRU cap
-  svgParseCache.set(content, parsed);
-  return parsed;
-}
-
-// SVG primitive's outer transform: translate to (cx, cy), scale to
-// (width, height), and shift viewBox origin to 0,0. Reused by render
-// and export so the geometry stays identical.
-export function svgPlacementTransform(p: {
-  cx: number;
-  cy: number;
-  width: number;
-  height: number;
-  content: string;
-}): { transform: string; body: string } | null {
-  const { viewBox, body } = parseSvgContent(p.content);
-  const [vx, vy, vw, vh] = viewBox;
-  if (vw <= 0 || vh <= 0 || !body) return null;
-  const sx = p.width / vw;
-  const sy = p.height / vh;
-  const tx = p.cx - p.width / 2;
-  const ty = p.cy - p.height / 2;
-  const transform = `translate(${tx} ${ty}) scale(${sx} ${sy}) translate(${-vx} ${-vy})`;
-  return { transform, body };
+  const m = primitiveFor(p.kind);
+  return m.getCenter(p.params as never);
 }
 
 // `a` is the existing instance transform; `b` is the new transform a
@@ -245,13 +72,12 @@ export function svgPlacementTransform(p: {
 //
 // Why it matters: when a primitive seeds with `transform = ""` this is
 // invisible — both orderings produce just `b`. But once primitives seed
-// with their own transforms (barStack's per-bar translate+scale, the new
-// model), composing a radial rotation on the RIGHT applied the rotation
-// in source coords first, then the bar's positioning — which spins each
-// bar around the radial center *before* placing it. Putting `b` on the
-// left lets the bar position itself first, then the radial rotation
-// orbits the placed bar around the radial center, which is what every
-// modifier visually means.
+// with their own transforms (barStack's per-bar translate+scale), composing
+// a radial rotation on the RIGHT applied the rotation in source coords
+// first, then the bar's positioning — which spins each bar around the
+// radial center *before* placing it. Putting `b` on the left lets the bar
+// position itself first, then the radial rotation orbits the placed bar
+// around the radial center, which is what every modifier visually means.
 function composeTransform(a: string, b: string): string {
   return a ? `${b} ${a}` : b;
 }
@@ -322,15 +148,11 @@ function seedInstances(
       const child = node.children[i];
       if (!child.enabled) continue;
       const expanded = expandNode(child, allNodes);
-      // Collect the child's clipPath definitions so the group's render emits
-      // them all in one <defs>.
       clipDefs.push(...expanded.clipDefs);
       out.push(...expanded.instances);
     }
     return out;
   }
-  // Primitive node — every instance carries the same primitive + style;
-  // colorCycle can override per-instance later.
   return seedPrimitiveInstances(node);
 }
 
@@ -341,10 +163,10 @@ function seedPrimitiveInstances(node: PrimitiveNode): Instance[] {
     strokeWidth: node.strokeEnabled ? node.strokeWidth : 0,
     opacity: node.opacity,
   };
-  const seeds =
-    node.primitive.kind === "barStack"
-      ? barStackInstances(node.primitive.params)
-      : [{ transform: "" }];
+  const m = primitiveFor(node.primitive.kind);
+  const seeds = m.seedTransforms
+    ? m.seedTransforms(node.primitive.params as never)
+    : [{ transform: "" }];
   return seeds.map((s) => ({
     ...s,
     ...baseStyle,
@@ -485,10 +307,8 @@ function applyModifier(
       //     so far in this stack.
       // B = the target node's full expansion (all of its own modifiers).
       const targetExpanded = expandNode(target, allNodes);
-      // Strip pathOverride from previous boolean ops in this stack by also
-      // honoring it here when building selfSvg.
-      const selfSvg = buildSvgForInstances(node, instances);
-      const targetSvg = buildSvgForInstances(target, targetExpanded.instances);
+      const selfSvg = instancesToSvgFragment(instances);
+      const targetSvg = instancesToSvgFragment(targetExpanded.instances);
       const d = computeBooleanPath(selfSvg, targetSvg, mod.params.op);
       if (!d) return instances;
       // The result is one merged path. Collapse instances to a single
@@ -499,7 +319,11 @@ function applyModifier(
       const first = instances[0];
       return [
         {
-          primitive: first?.primitive ?? (node.kind === "primitive" ? node.primitive : { kind: "rect", params: { cx: 0, cy: 0, w: 0, h: 0, rx: 0 } }),
+          primitive:
+            first?.primitive ??
+            (node.kind === "primitive"
+              ? node.primitive
+              : { kind: "rect", params: { cx: 0, cy: 0, w: 0, h: 0, rx: 0 } }),
           transform: "",
           fill: first?.fill ?? "#000000",
           stroke: first?.stroke ?? "none",
@@ -510,11 +334,4 @@ function applyModifier(
       ];
     }
   }
-}
-
-// Build an SVG fragment that represents a list of instances. Each instance
-// carries its primitive (or pathOverride), so this works uniformly for
-// primitive nodes and group expansions.
-function buildSvgForInstances(_node: Node, instances: Instance[]): string {
-  return instancesToSvgFragment(instances);
 }

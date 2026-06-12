@@ -1,64 +1,18 @@
 // SVG + PNG export. SVG is built as a string (faster + no SSR dep than
 // react-dom/server). PNG rasterizes the SVG via a Blob URL onto a canvas.
 
-import {
-  expandNode,
-  getBooleanHiddenIds,
-  polygonPath,
-  svgPlacementTransform,
-  wedgePath,
-  type ClipDef,
-} from "./engine";
+import { expandNode, getBooleanHiddenIds, type ClipDef } from "./engine";
+import { primitiveFor } from "./primitives/runtime-registry";
 import type { Doc, Node, Primitive } from "./types";
-
-function cssFontFamily(family: string): string {
-  return `"${family.replace(/"/g, '\\"')}", system-ui, sans-serif`;
-}
 
 function escapeAttr(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
 }
 
-function escapeText(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
 function primitiveSvg(primitive: Primitive): string {
-  switch (primitive.kind) {
-    case "rect": {
-      const p = primitive.params;
-      const rx = p.rx > 0 ? ` rx="${p.rx}"` : "";
-      return `<rect x="${p.cx - p.w / 2}" y="${p.cy - p.h / 2}" width="${p.w}" height="${p.h}"${rx} />`;
-    }
-    case "ellipse": {
-      const p = primitive.params;
-      return `<ellipse cx="${p.cx}" cy="${p.cy}" rx="${p.rx}" ry="${p.ry}" />`;
-    }
-    case "barStack": {
-      // One base rect — per-instance transforms (from barStackInstances)
-      // position each bar.
-      const p = primitive.params;
-      return `<rect x="${p.cx - p.width / 2}" y="${p.cy - p.height / 2}" width="${p.width}" height="${p.height}" />`;
-    }
-    case "wedge":
-      return `<path d="${wedgePath(primitive.params)}" />`;
-    case "polygon":
-      return `<path d="${polygonPath(primitive.params)}" />`;
-    case "svg": {
-      const placed = svgPlacementTransform(primitive.params);
-      if (!placed) return "";
-      return `<g transform="${placed.transform}">${placed.body}</g>`;
-    }
-    case "text": {
-      const p = primitive.params;
-      const ff = cssFontFamily(p.font);
-      const transform = p.rotation
-        ? ` transform="rotate(${p.rotation} ${p.cx} ${p.cy})"`
-        : "";
-      const ls = p.letterSpacing ? ` letter-spacing="${p.letterSpacing}"` : "";
-      return `<text x="${p.cx}" y="${p.cy}" font-family='${escapeAttr(ff)}' font-size="${p.size}" text-anchor="${p.anchor}" dominant-baseline="${p.baseline}"${ls}${transform}>${escapeText(p.content)}</text>`;
-    }
-  }
+  // Each primitive module owns the SVG fragment for ONE base shape (no
+  // style attrs, no transform). The caller wraps it per instance below.
+  return primitiveFor(primitive.kind).geometry(primitive.params as never);
 }
 
 function clipDefSvg(def: ClipDef): string {

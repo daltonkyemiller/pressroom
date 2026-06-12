@@ -1,9 +1,12 @@
+import {
+  PRIMITIVES_RUNTIME,
+  primitiveFor,
+  type PrimitiveKind,
+} from "./primitives/runtime-registry";
 import type {
-  BarStackParams,
   ClipParams,
   ColorCycleParams,
   Doc,
-  EllipseParams,
   GrainParams,
   GridRepeatParams,
   LinearRepeatParams,
@@ -11,27 +14,17 @@ import type {
   ModifierKind,
   MirrorParams,
   Node,
-  PolygonParams,
   Primitive,
-  PrimitiveKind,
   PrimitiveNode,
   RadialRepeatParams,
-  RectParams,
   ScatterParams,
-  SvgParams,
-  TextParams,
-  WedgeParams,
 } from "./types";
 
-export const PRIMITIVE_LABELS: Record<PrimitiveKind, string> = {
-  rect: "Rectangle",
-  ellipse: "Ellipse",
-  barStack: "Bar stack",
-  wedge: "Wedge",
-  polygon: "Polygon / star",
-  text: "Text",
-  svg: "SVG",
-};
+// Label record derived from the primitive registry so adding a new kind
+// doesn't need a parallel update here.
+export const PRIMITIVE_LABELS = Object.fromEntries(
+  (Object.keys(PRIMITIVES_RUNTIME) as PrimitiveKind[]).map((k) => [k, PRIMITIVES_RUNTIME[k].label]),
+) as Record<PrimitiveKind, string>;
 
 export const MODIFIER_LABELS: Record<ModifierKind, string> = {
   linearRepeat: "Linear repeat",
@@ -44,20 +37,8 @@ export const MODIFIER_LABELS: Record<ModifierKind, string> = {
   boolean: "Boolean",
 };
 
-export const PRIMITIVE_KINDS: PrimitiveKind[] = [
-  "barStack",
-  "wedge",
-  "polygon",
-  "rect",
-  "ellipse",
-  "text",
-  "svg",
-];
+export { PRIMITIVE_KINDS } from "./primitives/runtime-registry";
 
-// A simple placeholder so a new SVG primitive shows something instead
-// of an empty space — a 5-point star at 0..100 viewBox. Replaced when
-// the user pastes or uploads their own.
-const PLACEHOLDER_SVG = `<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><polygon points="50,5 61,38 95,38 67,57 78,90 50,70 22,90 33,57 5,38 39,38" /></svg>`;
 export const MODIFIER_KINDS: ModifierKind[] = [
   "linearRepeat",
   "radialRepeat",
@@ -72,6 +53,7 @@ export const MODIFIER_KINDS: ModifierKind[] = [
 const DEFAULT_W = 800;
 const DEFAULT_H = 800;
 const CENTER = DEFAULT_W / 2;
+const CENTER_POINT = { x: CENTER, y: CENTER };
 
 export const DEFAULT_PALETTE = [
   "#d96b29",
@@ -83,90 +65,8 @@ export const DEFAULT_PALETTE = [
 ];
 
 export function makePrimitive(kind: PrimitiveKind): Primitive {
-  switch (kind) {
-    case "rect":
-      return {
-        kind: "rect",
-        params: {
-          cx: CENTER,
-          cy: CENTER,
-          w: 160,
-          h: 160,
-          rx: 0,
-        } satisfies RectParams,
-      };
-    case "ellipse":
-      return {
-        kind: "ellipse",
-        params: { cx: CENTER, cy: CENTER, rx: 100, ry: 100 } satisfies EllipseParams,
-      };
-    case "barStack":
-      return {
-        kind: "barStack",
-        params: {
-          cx: CENTER,
-          cy: CENTER - 160,
-          count: 14,
-          width: 240,
-          height: 12,
-          gap: 8,
-          taper: -100,
-          jitter: 0,
-          seed: 1,
-          rotation: 0,
-        } satisfies BarStackParams,
-      };
-    case "wedge":
-      return {
-        kind: "wedge",
-        params: {
-          cx: CENTER,
-          cy: CENTER,
-          outerRadius: 200,
-          innerRadius: 80,
-          startAngle: -45,
-          sweep: 90,
-        } satisfies WedgeParams,
-      };
-    case "polygon":
-      return {
-        kind: "polygon",
-        params: {
-          cx: CENTER,
-          cy: CENTER,
-          radius: 140,
-          sides: 6,
-          starInner: 1,
-          rotation: 0,
-        } satisfies PolygonParams,
-      };
-    case "text":
-      return {
-        kind: "text",
-        params: {
-          cx: CENTER,
-          cy: CENTER,
-          content: "FORGE",
-          size: 120,
-          font: "Mondwest",
-          anchor: "middle",
-          baseline: "middle",
-          rotation: 0,
-          letterSpacing: 0,
-        } satisfies TextParams,
-      };
-    case "svg":
-      return {
-        kind: "svg",
-        params: {
-          cx: CENTER,
-          cy: CENTER,
-          width: 300,
-          height: 300,
-          content: PLACEHOLDER_SVG,
-        } satisfies SvgParams,
-      };
-  }
+  const m = primitiveFor(kind);
+  return { kind, params: m.defaults(CENTER_POINT) } as Primitive;
 }
 
 export function makeModifier(
@@ -279,114 +179,13 @@ export function nextModId(): number {
   return _modId++;
 }
 
-// Generate randomized primitive params within sensible visual bounds.
-// Used by the "🎲 randomize" button on the property panel for kickstarting
-// a composition.
+// Reroll primitive params within sensible visual bounds. The per-kind
+// shape (which params to touch, what bounds) lives in each primitive's
+// runtime module — this is just the registry lookup.
 function randomizePrimitive(primitive: Primitive): Primitive {
-  const r = Math.random;
-  const jitter = (base: number, spread: number) => base + (r() - 0.5) * spread;
-  switch (primitive.kind) {
-    case "rect": {
-      const w = 50 + r() * 400;
-      const h = 50 + r() * 400;
-      return {
-        kind: "rect",
-        params: {
-          cx: jitter(CENTER, 240),
-          cy: jitter(CENTER, 240),
-          w,
-          h,
-          rx: r() < 0.5 ? 0 : r() * 60,
-        },
-      };
-    }
-    case "ellipse": {
-      const rx = 30 + r() * 250;
-      const ry = r() < 0.5 ? rx : 30 + r() * 250;
-      return {
-        kind: "ellipse",
-        params: {
-          cx: jitter(CENTER, 240),
-          cy: jitter(CENTER, 240),
-          rx,
-          ry,
-        },
-      };
-    }
-    case "barStack":
-      return {
-        kind: "barStack",
-        params: {
-          cx: jitter(CENTER, 200),
-          cy: jitter(CENTER, 200),
-          count: 4 + Math.floor(r() * 24),
-          width: 100 + r() * 280,
-          height: 4 + r() * 22,
-          gap: Math.floor(r() * 18),
-          taper: Math.floor(jitter(0, 200)),
-          jitter: r() < 0.5 ? 0 : Math.floor(r() * 80),
-          seed: Math.floor(r() * 9999),
-          rotation: r() < 0.7 ? 0 : Math.floor(r() * 360),
-        },
-      };
-    case "wedge": {
-      const ro = 80 + r() * 220;
-      const ri = r() < 0.5 ? 0 : r() * (ro - 20);
-      return {
-        kind: "wedge",
-        params: {
-          cx: jitter(CENTER, 200),
-          cy: jitter(CENTER, 200),
-          outerRadius: ro,
-          innerRadius: ri,
-          startAngle: Math.floor(-180 + r() * 360),
-          sweep: Math.floor(30 + r() * 270),
-        },
-      };
-    }
-    case "polygon": {
-      const isStar = r() < 0.4;
-      return {
-        kind: "polygon",
-        params: {
-          cx: jitter(CENTER, 200),
-          cy: jitter(CENTER, 200),
-          radius: 60 + r() * 180,
-          sides: 3 + Math.floor(r() * 9),
-          starInner: isStar ? 0.2 + r() * 0.6 : 1,
-          rotation: r() < 0.6 ? 0 : Math.floor(r() * 360),
-        },
-      };
-    }
-    case "text":
-      return {
-        kind: "text",
-        params: {
-          ...primitive.params,
-          cx: jitter(CENTER, 200),
-          cy: jitter(CENTER, 200),
-          size: 60 + r() * 200,
-          rotation: r() < 0.6 ? 0 : Math.floor((r() - 0.5) * 90),
-          letterSpacing: Math.floor((r() - 0.5) * 20),
-        },
-      };
-    case "svg": {
-      // Randomize position + size only; the content stays as the user set
-      // it (randomizing the loaded markup makes no sense).
-      const w = 120 + r() * 320;
-      const h = 120 + r() * 320;
-      return {
-        kind: "svg",
-        params: {
-          ...primitive.params,
-          cx: jitter(CENTER, 200),
-          cy: jitter(CENTER, 200),
-          width: w,
-          height: h,
-        },
-      };
-    }
-  }
+  const m = primitiveFor(primitive.kind);
+  const params = m.randomize(primitive.params as never, CENTER_POINT);
+  return { kind: primitive.kind, params } as Primitive;
 }
 
 export function randomizeNode(node: Node, palette: string[]): Node {

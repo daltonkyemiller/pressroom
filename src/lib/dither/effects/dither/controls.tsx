@@ -28,6 +28,8 @@ export const DitherControls: ControlsComponent<DitherParams> = ({
       ]}
       onChange={(v) => onPatch({ algo: v })} />
     <PaletteControl name="palette" value={p.palette} onChange={(v) => onPatch({ palette: v })} />
+    <SliderControl name="cell size" min={1} max={16} step={1} value={p.cellSize ?? 1} unit="px"
+      onStart={onStart} onCommit={onCommit} onChange={(v) => onPatch({ cellSize: v })} />
     <SliderControl name="strength" min={0} max={100} value={p.strength} unit="%"
       onStart={onStart} onCommit={onCommit} onChange={(v) => onPatch({ strength: v })} />
     <SliderControl name="pre-blur" min={0} max={5} value={p.preBlur} unit="px"

@@ -25,6 +25,12 @@ export type DitherParams = {
   jitter: number; // 0..100 — per-pixel deterministic random offset
   inkColor: string; // hex — ink shade when preserveColors is on
   preserveTransparency: boolean; // skip alpha=0 pixels: no quantize, no error diffusion in/out
+  // Pixel size of each dithered cell. 1 = native (one decision per
+  // pixel). Higher = chunkier "retro" look (image is downsampled by
+  // this factor before dithering, then nearest-neighbor upsampled back).
+  // Scales with render resolution so size=2 at the 900px reference
+  // looks the same at any preview / export dim.
+  cellSize: number;
 };
 
 export const dither: EffectModule<"dither", DitherParams> = {
@@ -43,8 +49,18 @@ export const dither: EffectModule<"dither", DitherParams> = {
     jitter: 0,
     inkColor: "#000000",
     preserveTransparency: false,
+    cellSize: 1,
   },
   apply(img, p) {
+    // Chunky-pixel path. The dither logic itself is unchanged; we just
+    // downsample the input by cellSize, dither at small res, then
+    // nearest-neighbor upsample. Each dither decision now drives a
+    // cellSize × cellSize block of output pixels — the "retro" look.
+    // Round here so old payloads with no `cellSize` field default to 1.
+    const cellSize = Math.max(1, Math.round(p.cellSize ?? 1));
+    if (cellSize > 1) {
+      return ditherAtCellSize(img, p, cellSize);
+    }
     const w = img.width;
     const h = img.height;
     const data = img.data;
@@ -208,9 +224,61 @@ export const dither: EffectModule<"dither", DitherParams> = {
     }
     return img;
   },
-  summarize: (p) => `${p.algo} · ${p.palette}`,
+  summarize: (p) => {
+    const cs = Math.round(p.cellSize ?? 1);
+    return `${p.algo} · ${p.palette}${cs > 1 ? ` · ${cs}px` : ""}`;
+  },
   // preBlur is px-dimensioned. matrixScale is a luminance amplitude
   // (16..128 on the Bayer matrix), not a px size — leave untouched.
   // jitter, strength, diffusion are all percentages.
-  scaleParams: (p, s) => ({ ...p, preBlur: p.preBlur * s }),
+  // cellSize scales so the chunky pattern keeps the same visual size
+  // across preview / export render resolutions.
+  scaleParams: (p, s) => ({
+    ...p,
+    preBlur: p.preBlur * s,
+    cellSize: Math.max(1, (p.cellSize ?? 1) * s),
+  }),
 };
+
+// Wraps the main dither path with a downsample → dither → nearest-
+// neighbor upsample sandwich so each dither decision drives a
+// cellSize × cellSize block instead of a single pixel.
+function ditherAtCellSize(
+  img: ImageData,
+  p: DitherParams,
+  cellSize: number,
+): ImageData {
+  const w = img.width;
+  const h = img.height;
+  const smallW = Math.max(1, Math.floor(w / cellSize));
+  const smallH = Math.max(1, Math.floor(h / cellSize));
+
+  // Downsample with smoothing so each small-cell pixel is the average
+  // of the cellSize × cellSize source neighborhood — cleaner than
+  // sampling one source pixel per block.
+  const srcCanvas = new OffscreenCanvas(w, h);
+  srcCanvas.getContext("2d")!.putImageData(img, 0, 0);
+  const smallCanvas = new OffscreenCanvas(smallW, smallH);
+  const sctx = smallCanvas.getContext("2d", { willReadFrequently: true })!;
+  sctx.imageSmoothingEnabled = true;
+  sctx.imageSmoothingQuality = "high";
+  sctx.drawImage(srcCanvas, 0, 0, smallW, smallH);
+  const smallImg = sctx.getImageData(0, 0, smallW, smallH);
+
+  // Run the regular dither path on the small image. We re-enter `apply`
+  // with cellSize=1 so the inner loops execute (the cellSize>1 branch
+  // would recurse forever otherwise).
+  dither.apply(smallImg, { ...p, cellSize: 1 });
+
+  // Upsample back into img with nearest-neighbor so each small pixel
+  // becomes a clean cellSize × cellSize block (no bilinear blur on the
+  // block edges — that would defeat the whole effect).
+  smallCanvas.getContext("2d")!.putImageData(smallImg, 0, 0);
+  const dstCanvas = new OffscreenCanvas(w, h);
+  const dctx = dstCanvas.getContext("2d")!;
+  dctx.imageSmoothingEnabled = false;
+  dctx.drawImage(smallCanvas, 0, 0, w, h);
+  const result = dctx.getImageData(0, 0, w, h);
+  img.data.set(result.data);
+  return img;
+}

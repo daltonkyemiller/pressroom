@@ -146,25 +146,54 @@ function cellsToInstances(
 ): Instance[] {
   const alphaCutoff = params.alphaThreshold / 255;
   const opacityMul = Math.max(0, Math.min(1, params.opacityScale));
-  const out: Instance[] = [];
+
+  // Coalesce cells by (color, quantized-opacity) into compound paths.
+  // Without this, cellSize=4 on an 800×800 doc emits 40k <rect>
+  // elements and React reconciliation takes seconds — the slow render
+  // is the actual symptom when "typing a cellSize doesn't update."
+  // Same raster typically has under a few hundred unique colors, so
+  // the DOM goes from O(cells) to O(unique colors), a 100-1000x cut.
+  // pathOverride is already a first-class field on Instance (the
+  // boolean modifier emits it the same way), so renderer + export
+  // pick it up with no changes.
+  type Group = { fill: string; opacity: number; pieces: string[] };
+  const groups = new Map<string, Group>();
   for (const c of cells) {
     if (c.a <= alphaCutoff) continue;
+    const r = c.r | 0;
+    const g = c.g | 0;
+    const b = c.b | 0;
+    const opacity = c.a * opacityMul;
+    // Quantize opacity to 2 decimal places so near-duplicates merge.
+    // Without this, alpha noise across cells would explode the group
+    // count and partly defeat the optimization.
+    const oQ = Math.round(opacity * 100) / 100;
+    const key = `${r}_${g}_${b}_${oQ}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = { fill: `rgb(${r},${g},${b})`, opacity: oQ, pieces: [] };
+      groups.set(key, group);
+    }
+    // Subpath = move to top-left, h(w), v(h), h(-w), close. SVG path
+    // d-strings happily concatenate any number of these.
+    group.pieces.push(`M${c.x},${c.y}h${c.w}v${c.h}h${-c.w}z`);
+  }
+
+  const out: Instance[] = [];
+  for (const grp of groups.values()) {
     out.push({
       primitive: {
         kind: "rect",
-        params: {
-          cx: c.x + c.w / 2,
-          cy: c.y + c.h / 2,
-          w: c.w,
-          h: c.h,
-          rx: 0,
-        },
+        // pathOverride wins so these stub params never render — they
+        // satisfy the Instance type.
+        params: { cx: 0, cy: 0, w: 0, h: 0, rx: 0 },
       },
       transform: "",
-      fill: `rgb(${c.r | 0},${c.g | 0},${c.b | 0})`,
+      fill: grp.fill,
       stroke: fallback?.stroke ?? "none",
       strokeWidth: 0,
-      opacity: c.a * opacityMul,
+      opacity: grp.opacity,
+      pathOverride: grp.pieces.join(""),
     });
   }
   return out;

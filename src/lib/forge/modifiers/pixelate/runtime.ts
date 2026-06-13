@@ -56,6 +56,14 @@ const cache = new Map<string, GridCell[]>();
 const inflight = new Set<string>();
 const listeners = new Set<() => void>();
 
+// Most recent successful rasterization, kept around even when the LRU
+// evicts its entry. Serves as a "while you wait" fallback so a cache
+// miss during scrubbing doesn't flash the original un-pixelated SVG.
+// The user sees stale pixelation (probably wrong cellSize) for the
+// 50-200ms it takes the new raster to complete — much smoother than
+// the un-effected source jumping back into frame.
+let lastSuccessful: GridCell[] | null = null;
+
 /** Subscribe to "the pixelate cache has new data" notifications. Forge
  *  app uses this to bump a render-trigger state so the next render's
  *  apply call gets the cached result. */
@@ -182,6 +190,7 @@ export const pixelate: ModifierModule<"pixelate", PixelateParams> = {
     if (cached) {
       // Bump to MRU position.
       touchLru(key, cached);
+      lastSuccessful = cached;
       return cellsToInstances(cached, params, instances[0]);
     }
     if (!inflight.has(key)) {
@@ -189,6 +198,7 @@ export const pixelate: ModifierModule<"pixelate", PixelateParams> = {
       rasterizeAndSample(fragment, docW, docH, cellSize)
         .then((cells) => {
           touchLru(key, cells);
+          lastSuccessful = cells;
           inflight.delete(key);
           notify();
         })
@@ -197,9 +207,16 @@ export const pixelate: ModifierModule<"pixelate", PixelateParams> = {
           inflight.delete(key);
         });
     }
-    // First frame after a change: render the un-pixelated geometry so
-    // the user sees something. The next frame (after notify) hits the
-    // cache and pixelates.
+    // Show the last successful raster while the new one cooks. Before
+    // this fallback, scrubbing cellSize / upstream geometry would flash
+    // the un-pixelated SVG on every cache miss — including the moment
+    // of release, where the raster for the just-committed value is
+    // still in flight. Stale pixelation reads as "loading" instead of
+    // "broken." On the first apply ever (no successful raster yet) we
+    // still return original — there's no alternative.
+    if (lastSuccessful) {
+      return cellsToInstances(lastSuccessful, params, instances[0]);
+    }
     return instances;
   },
 };

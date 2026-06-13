@@ -3,7 +3,28 @@ import { SliderControl } from "@/components/dither/controls";
 import { Button } from "@/components/ui/button";
 import { LinkedSliders } from "@/components/forge/linked-sliders";
 import type { ControlsComponent } from "../types";
-import type { SvgParams } from "./runtime";
+import { parseSvgContent, type SvgParams } from "./runtime";
+
+// Pick a width/height for a freshly-loaded SVG that preserves its source
+// aspect ratio. We use the current `currentLongest` value (whichever of
+// width/height was bigger) as the longest dim of the new fit — so the
+// SVG occupies roughly the same canvas space the previous content did,
+// just at the right shape.
+function fitToAspect(
+  svg: string,
+  currentLongest: number,
+): { width: number; height: number } | null {
+  const { viewBox } = parseSvgContent(svg);
+  const [, , vw, vh] = viewBox;
+  if (!Number.isFinite(vw) || !Number.isFinite(vh) || vw <= 0 || vh <= 0) {
+    return null;
+  }
+  const aspect = vw / vh;
+  if (aspect >= 1) {
+    return { width: currentLongest, height: Math.round(currentLongest / aspect) };
+  }
+  return { width: Math.round(currentLongest * aspect), height: currentLongest };
+}
 
 export const SvgControls: ControlsComponent<SvgParams> = ({ params, onPatch }) => {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -18,13 +39,32 @@ export const SvgControls: ControlsComponent<SvgParams> = ({ params, onPatch }) =
     const reader = new FileReader();
     reader.onload = () => {
       const text = typeof reader.result === "string" ? reader.result : "";
-      if (text) {
+      if (!text) return;
+      // Honor the source SVG's aspect ratio so a wide/tall asset isn't
+      // squashed into the previous square. We pin the longest dim to
+      // the existing one so the canvas footprint stays familiar.
+      const longest = Math.max(params.width, params.height) || 300;
+      const fit = fitToAspect(text, longest);
+      if (fit) {
+        onPatch({ content: text, width: fit.width, height: fit.height });
+      } else {
         onPatch({ content: text });
-        setStatus(`loaded ${file.name}`);
       }
+      setStatus(`loaded ${file.name}`);
     };
     reader.onerror = () => setStatus("failed to read file");
     reader.readAsText(file);
+  };
+
+  const fitToContent = () => {
+    const longest = Math.max(params.width, params.height) || 300;
+    const fit = fitToAspect(params.content, longest);
+    if (fit) {
+      onPatch({ width: fit.width, height: fit.height });
+      setStatus("fit to content");
+    } else {
+      setStatus("couldn't read viewBox");
+    }
   };
 
   return (
@@ -33,6 +73,11 @@ export const SvgControls: ControlsComponent<SvgParams> = ({ params, onPatch }) =
         <Button variant="outline" size="sm" className="flex-1"
           onClick={() => fileRef.current?.click()}>
           load svg…
+        </Button>
+        <Button variant="outline" size="sm" className="flex-1"
+          onClick={fitToContent}
+          title="resize width/height to match the SVG's viewBox aspect ratio">
+          fit to content
         </Button>
         <input
           ref={fileRef}

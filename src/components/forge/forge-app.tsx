@@ -527,6 +527,36 @@ export default function ForgeApp() {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [panning, setPanning] = useState(false);
+  // Tracks whether the spacebar is held — when it is, left-click+drag
+  // pans from anywhere (including over the canvas), matching the
+  // Figma / Photoshop convention. A ref shadows the state so the
+  // pointerdown handler can read the live value without re-binding.
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const spaceHeldRef = useRef(false);
+  useEffect(() => {
+    spaceHeldRef.current = spaceHeld;
+  }, [spaceHeld]);
+  useEffect(() => {
+    const isEditable = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null;
+      return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+    };
+    const onDown = (e: KeyboardEvent) => {
+      if (e.code !== "Space" || isEditable(e.target)) return;
+      if (e.repeat) return;
+      e.preventDefault(); // prevent page scroll
+      setSpaceHeld(true);
+    };
+    const onUp = (e: KeyboardEvent) => {
+      if (e.code === "Space") setSpaceHeld(false);
+    };
+    window.addEventListener("keydown", onDown);
+    window.addEventListener("keyup", onUp);
+    return () => {
+      window.removeEventListener("keydown", onDown);
+      window.removeEventListener("keyup", onUp);
+    };
+  }, []);
   const zoomRef = useRef(zoom);
   const panRef = useRef(pan);
   useEffect(() => {
@@ -790,9 +820,25 @@ export default function ForgeApp() {
         <div
           ref={stageRef}
           className="relative flex flex-1 items-center justify-center overflow-hidden p-10"
+          style={{ cursor: spaceHeld ? (panning ? "grabbing" : "grab") : undefined }}
           onPointerDown={(e) => {
-            // Pan only when clicking the empty background (not the SVG itself).
-            if (e.target === e.currentTarget || (e.target as HTMLElement).tagName === "DIV") {
+            // Pan if:
+            //  - middle-click anywhere (industry standard)
+            //  - space-held + left-click anywhere (Figma / Photoshop)
+            //  - left-click on the empty stage background (original behavior;
+            //    clicks on the SVG fall through so shape selection still works)
+            if (e.button === 1) {
+              startPan(e);
+              return;
+            }
+            if (e.button === 0 && spaceHeldRef.current) {
+              startPan(e);
+              return;
+            }
+            const onEmptyStage =
+              e.target === e.currentTarget ||
+              (e.target as HTMLElement).tagName === "DIV";
+            if (e.button === 0 && onEmptyStage) {
               startPan(e);
             }
           }}

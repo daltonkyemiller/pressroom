@@ -89,7 +89,7 @@ function clamp(n: number, lo: number, hi: number) {
 export default function ForgeApp() {
   const initialDocRef = useRef<Doc | null>(null);
   if (initialDocRef.current === null) initialDocRef.current = makeDefaultDoc();
-  const { doc, setDoc, undo, redo, replace: replaceDoc, canUndo, canRedo } =
+  const { doc, setDoc, undo, redo, canUndo, canRedo } =
     useUndoableDoc<Doc>(initialDocRef.current);
   const [selectedNodeId, setSelectedNodeId] = useState<number | null>(
     () => doc.nodes[0]?.id ?? null,
@@ -392,12 +392,14 @@ export default function ForgeApp() {
   );
 
 
-  const resetDoc = useCallback(() => {
-    if (!confirm("Reset to default document?")) return;
-    const fresh = makeDefaultDoc();
-    replaceDoc(fresh);
-    setSelectedNodeId(fresh.nodes[0]?.id ?? null);
-  }, [replaceDoc]);
+  const clearDoc = useCallback(() => {
+    if (!confirm("Clear all nodes and start from scratch?")) return;
+    // Preserve doc settings (size, palette, grain, background) — only
+    // nuke the node tree. setDoc keeps this in undo history, so a
+    // ctrl/cmd+z gets the user's work back if they hit Clear by mistake.
+    setDoc((d) => ({ ...d, nodes: [] }));
+    setSelectedNodeId(null);
+  }, [setDoc]);
 
   const randomizeSelectedNode = useCallback(() => {
     if (selectedNodeId == null) return;
@@ -728,9 +730,9 @@ export default function ForgeApp() {
             variant="outline"
             size="default"
             className="justify-between text-xs tracking-widest uppercase"
-            onClick={resetDoc}
+            onClick={clearDoc}
           >
-            <span>Reset</span>
+            <span>Clear all</span>
             <IconArrowRotateAnticlockwise className="size-3.5" />
           </Button>
         </div>

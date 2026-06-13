@@ -3,7 +3,7 @@
 // (which has its own children: Node[]). Every mutation has to walk the
 // tree, so these helpers keep the actions in forge-app readable.
 
-import type { Node } from "./types";
+import type { Modifier, Node } from "./types";
 
 // Find a node by id anywhere in the tree.
 export function findNode(nodes: readonly Node[], id: number): Node | undefined {
@@ -181,4 +181,61 @@ export function deepCloneWithFreshIds(
   }
   reid(cloned);
   return cloned;
+}
+
+// Translate every positional param in a node tree by (dx, dy). Used by
+// "fit canvas to content," which shifts the geometry to origin so the
+// resized canvas isn't full of leading whitespace.
+//
+// All primitives share a (cx, cy) pair. Modifiers that anchor their
+// effect in canvas space carry their own center — radialRepeat,
+// clip — or a single-axis line (mirror). Everything else (linear
+// repeats, scatter, color, scale, etc.) is offset-relative or non-
+// positional and stays untouched.
+export function shiftNode(n: Node, dx: number, dy: number): Node {
+  if (n.kind === "primitive") {
+    // Spread-with-computed-params loses TS's correlated union — every
+    // primitive kind has cx, cy but TS can't see that across the
+    // discriminator. The `as never` is the standard bridging cast we
+    // use everywhere similar registry-driven code lives.
+    const params = {
+      ...(n.primitive.params as { cx: number; cy: number }),
+      cx: n.primitive.params.cx + dx,
+      cy: n.primitive.params.cy + dy,
+    } as never;
+    return {
+      ...n,
+      primitive: { ...n.primitive, params },
+      modifiers: n.modifiers.map((m) => shiftModifier(m, dx, dy)),
+    };
+  }
+  return {
+    ...n,
+    children: n.children.map((c) => shiftNode(c, dx, dy)),
+    modifiers: n.modifiers.map((m) => shiftModifier(m, dx, dy)),
+  };
+}
+
+function shiftModifier(m: Modifier, dx: number, dy: number): Modifier {
+  switch (m.kind) {
+    case "radialRepeat":
+    case "clip":
+      return {
+        ...m,
+        params: { ...m.params, cx: m.params.cx + dx, cy: m.params.cy + dy } as never,
+      };
+    case "mirror":
+      // `center` is a line position along the axis perpendicular to the
+      // flip — axis="y" flips horizontally across a vertical x-line,
+      // axis="x" flips vertically across a horizontal y-line.
+      return {
+        ...m,
+        params: {
+          ...m.params,
+          center: m.params.center + (m.params.axis === "y" ? dx : dy),
+        },
+      };
+    default:
+      return m;
+  }
 }

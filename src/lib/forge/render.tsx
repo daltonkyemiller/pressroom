@@ -193,10 +193,17 @@ export function DocSvg({
   doc,
   selectedNodeId,
   onSelectNode,
+  contentRef,
 }: {
   doc: Doc;
   selectedNodeId?: number | null;
   onSelectNode?: (id: number | null) => void;
+  /** Optional ref to the <g> wrapping all node content. Lets the host
+   *  compute the rendered bounding box (via getBBox) for things like
+   *  "fit canvas to content" — the wrapper excludes the background
+   *  rect and the grain overlay, which would otherwise occupy the
+   *  full canvas and defeat the fit. */
+  contentRef?: React.Ref<SVGGElement>;
 }) {
   const hidden = getBooleanHiddenIds(doc.nodes);
   return (
@@ -235,30 +242,32 @@ export function DocSvg({
         height={doc.height}
         fill={doc.backgroundEnabled ? doc.background : `url(#${CHECKER_PATTERN_ID})`}
       />
-      {/* Reverse: nodes[0] is the top of the sidebar and should paint LAST so
-          it appears in front, matching Figma/Photoshop layer conventions. */}
-      {[...doc.nodes].reverse().map((node) =>
-        node.enabled && !hidden.has(node.id) ? (
-          <g
-            key={node.id}
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelectNode?.(node.id);
-            }}
-            style={{
-              cursor: onSelectNode ? "pointer" : undefined,
-              outline:
-                selectedNodeId === node.id ? "1px dashed rgba(255,255,255,0.4)" : undefined,
-            }}
-          >
-            <NodeContent
-              node={node}
-              allNodes={doc.nodes}
-              docSize={{ width: doc.width, height: doc.height }}
-            />
-          </g>
-        ) : null,
-      )}
+      <g ref={contentRef}>
+        {/* Reverse: nodes[0] is the top of the sidebar and should paint LAST so
+            it appears in front, matching Figma/Photoshop layer conventions. */}
+        {[...doc.nodes].reverse().map((node) =>
+          node.enabled && !hidden.has(node.id) ? (
+            <g
+              key={node.id}
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelectNode?.(node.id);
+              }}
+              style={{
+                cursor: onSelectNode ? "pointer" : undefined,
+                outline:
+                  selectedNodeId === node.id ? "1px dashed rgba(255,255,255,0.4)" : undefined,
+              }}
+            >
+              <NodeContent
+                node={node}
+                allNodes={doc.nodes}
+                docSize={{ width: doc.width, height: doc.height }}
+              />
+            </g>
+          ) : null,
+        )}
+      </g>
       <GrainOverlay doc={doc} />
     </svg>
   );

@@ -58,6 +58,7 @@ import {
   isDescendantOrSelf,
   mapNode,
   removeNodeById,
+  shiftNode,
 } from "@/lib/forge/tree";
 import type {
   Doc,
@@ -401,6 +402,35 @@ export default function ForgeApp() {
     setSelectedNodeId(null);
   }, [setDoc]);
 
+  // Ref to the <g> wrapping all rendered node content. The wrapper sits
+  // inside the SVG between the background rect and the grain overlay
+  // (see DocSvg) — so getBBox() returns just the node geometry, not the
+  // full-canvas rect / grain.
+  const contentRef = useRef<SVGGElement | null>(null);
+  const fitDocToContent = useCallback(() => {
+    const g = contentRef.current;
+    if (!g) return;
+    const bbox = g.getBBox();
+    if (!Number.isFinite(bbox.width) || !Number.isFinite(bbox.height)) return;
+    if (bbox.width <= 0 || bbox.height <= 0) return;
+    const padding = 20;
+    const dx = -bbox.x + padding;
+    const dy = -bbox.y + padding;
+    const newW = Math.round(bbox.width + padding * 2);
+    const newH = Math.round(bbox.height + padding * 2);
+    // Shift every positional param in the tree by (dx, dy). All
+    // primitives share a (cx, cy) pair. Modifiers carry positions when
+    // their effect is anchored in canvas space (radialRepeat center,
+    // clip rect center, mirror line). Everything else is offsets /
+    // counts / colors and doesn't move with the canvas.
+    setDoc((d) => ({
+      ...d,
+      width: newW,
+      height: newH,
+      nodes: d.nodes.map((n) => shiftNode(n, dx, dy)),
+    }));
+  }, [setDoc]);
+
   const randomizeSelectedNode = useCallback(() => {
     if (selectedNodeId == null) return;
     setDoc((d) => ({
@@ -579,6 +609,7 @@ export default function ForgeApp() {
             doc={doc}
             onPatch={patchDoc}
             onPatchGrain={(p) => patchDoc({ grain: { ...doc.grain, ...p } })}
+            onFitToContent={fitDocToContent}
           />
 
           <div className="flex items-center justify-between px-5 pt-3 pb-2">
@@ -788,6 +819,7 @@ export default function ForgeApp() {
                 doc={doc}
                 selectedNodeId={selectedNodeId}
                 onSelectNode={setSelectedNodeId}
+                contentRef={contentRef}
               />
             </div>
           </div>
@@ -848,15 +880,27 @@ function DocSection({
   doc,
   onPatch,
   onPatchGrain,
+  onFitToContent,
 }: {
   doc: Doc;
   onPatch: (p: Partial<Doc>) => void;
   onPatchGrain: (p: Partial<Doc["grain"]>) => void;
+  onFitToContent: () => void;
 }) {
   return (
     <div className="border-b border-border bg-muted/20 px-3.5 py-3">
-      <div className="mb-2 text-xs tracking-widest text-muted-foreground uppercase">
-        Document
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-xs tracking-widest text-muted-foreground uppercase">
+          Document
+        </span>
+        <button
+          type="button"
+          onClick={onFitToContent}
+          title="resize canvas to wrap rendered content"
+          className="text-[10px] tracking-wider text-muted-foreground uppercase hover:text-foreground"
+        >
+          fit to content
+        </button>
       </div>
       <LinkedSliders
         aName="width"

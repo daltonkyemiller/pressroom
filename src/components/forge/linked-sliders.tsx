@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { IconLink, IconLinkBroken } from "nucleo-pixel";
 import { SliderControl } from "@/components/dither/controls";
 import { cn } from "@/lib/utils";
@@ -33,32 +33,50 @@ export function LinkedSliders({
 }: LinkedSlidersProps) {
   const [linked, setLinked] = useState(defaultLinked);
   // Ratio captured at link time so changing either side doesn't slowly
-  // drift due to rounding.
+  // drift due to rounding during a drag.
   const ratioRef = useRef<number>(aValue / Math.max(bValue, 1e-6));
+  // Track the (a, b) tuple we most recently emitted via onChange so we
+  // can detect *external* value changes — anything that didn't come
+  // through setA/setB. When the host re-shapes the doc out from under
+  // us (fit-to-content, undo, preset load), the ratio has to refresh
+  // or the next drag snaps back to the stale ratio. The drift fix
+  // above is preserved because internal changes match `lastEmitted`
+  // and skip the refresh.
+  const lastEmittedRef = useRef<{ a: number; b: number }>({ a: aValue, b: bValue });
+  useEffect(() => {
+    const last = lastEmittedRef.current;
+    if (last.a === aValue && last.b === bValue) return;
+    ratioRef.current = aValue / Math.max(bValue, 1e-6);
+    lastEmittedRef.current = { a: aValue, b: bValue };
+  }, [aValue, bValue]);
 
+  const emit = (a: number, b: number) => {
+    lastEmittedRef.current = { a, b };
+    onChange(a, b);
+  };
   const setA = (next: number) => {
     if (!linked) {
-      onChange(next, bValue);
+      emit(next, bValue);
       return;
     }
     const r = ratioRef.current;
     if (!Number.isFinite(r) || r === 0) {
-      onChange(next, bValue);
+      emit(next, bValue);
       return;
     }
-    onChange(next, next / r);
+    emit(next, next / r);
   };
   const setB = (next: number) => {
     if (!linked) {
-      onChange(aValue, next);
+      emit(aValue, next);
       return;
     }
     const r = ratioRef.current;
     if (!Number.isFinite(r)) {
-      onChange(aValue, next);
+      emit(aValue, next);
       return;
     }
-    onChange(next * r, next);
+    emit(next * r, next);
   };
   const toggleLink = () => {
     setLinked((l) => {

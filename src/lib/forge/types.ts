@@ -36,6 +36,7 @@ export type { ScatterParams } from "./modifiers/scatter/runtime";
 export type { ColorCycleParams } from "./modifiers/colorCycle/runtime";
 export type { ClipParams } from "./modifiers/clip/runtime";
 export type { BooleanParams } from "./modifiers/boolean/runtime";
+export type { PixelateParams } from "./modifiers/pixelate/runtime";
 export type { ModifierKind } from "./modifiers/runtime-registry";
 
 export type Primitive = {

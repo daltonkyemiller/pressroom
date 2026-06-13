@@ -10,6 +10,7 @@ import { ScatterControls } from "./scatter/controls";
 import { ColorCycleControls } from "./colorCycle/controls";
 import { ClipControls } from "./clip/controls";
 import { BooleanControls } from "./boolean/controls";
+import { PixelateControls } from "./pixelate/controls";
 
 export const MODIFIERS_CONTROLS = {
   linearRepeat: LinearRepeatControls,
@@ -20,6 +21,7 @@ export const MODIFIERS_CONTROLS = {
   colorCycle: ColorCycleControls,
   clip: ClipControls,
   boolean: BooleanControls,
+  pixelate: PixelateControls,
 } as const;
 
 export function modifierControlsFor<K extends ModifierKind>(

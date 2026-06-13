@@ -28,6 +28,9 @@ export type ModifierContext = {
    *  it's the primitive's visual center; for a group it's the children's
    *  pivot centroid. */
   pivot: ModifierCenter;
+  /** Doc dimensions. Used by render-and-replace modifiers (pixelate) that
+   *  need to rasterize the current geometry into a canvas of known size. */
+  docSize: { width: number; height: number };
   /** Compose a new modifier transform onto the existing instance
    *  transform. The new transform goes outermost — see engine.ts for
    *  why this matters with barStack-style seeded transforms. */

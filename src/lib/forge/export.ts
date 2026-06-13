@@ -30,8 +30,12 @@ function clipDefSvg(def: ClipDef): string {
   return `<clipPath id="${def.id}" clipPathUnits="userSpaceOnUse">${shape}</clipPath>`;
 }
 
-function nodeSvg(node: Node, allNodes: readonly Node[]): string {
-  const { instances, clipDefs } = expandNode(node, allNodes);
+function nodeSvg(
+  node: Node,
+  allNodes: readonly Node[],
+  docSize: { width: number; height: number },
+): string {
+  const { instances, clipDefs } = expandNode(node, allNodes, docSize);
   const defs = clipDefs.length > 0 ? `<defs>${clipDefs.map(clipDefSvg).join("")}</defs>` : "";
   // Style is now resolved per-instance (groups can mix primitives and
   // styles), so we set fill/stroke/opacity on each instance's <g>.
@@ -67,7 +71,7 @@ export function docToSvgString(doc: Doc): string {
   const nodes = [...doc.nodes]
     .reverse()
     .filter((n) => n.enabled && !hidden.has(n.id))
-    .map((n) => nodeSvg(n, doc.nodes))
+    .map((n) => nodeSvg(n, doc.nodes, { width: doc.width, height: doc.height }))
     .join("");
   const bg = doc.backgroundEnabled
     ? `<rect x="0" y="0" width="${doc.width}" height="${doc.height}" fill="${escapeAttr(doc.background)}" />`

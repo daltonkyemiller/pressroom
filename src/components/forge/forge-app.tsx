@@ -77,6 +77,7 @@ import {
   PrimitiveControls,
 } from "./controls";
 import { initBuiltInFonts } from "@/lib/forge/font-registry";
+import { subscribePixelate } from "@/lib/forge/modifiers/pixelate/runtime";
 
 const ZOOM_MIN = 0.1;
 const ZOOM_MAX = 8;
@@ -452,6 +453,19 @@ export default function ForgeApp() {
   // ceremony. Subsequent local-fonts loads happen on user action.
   useEffect(() => {
     void initBuiltInFonts();
+  }, []);
+
+  // The pixelate modifier is sync-on-the-outside, async-on-the-inside:
+  // it rasterizes the node's SVG fragment to a canvas and reads pixel
+  // colors, then caches the resulting cell grid. The first frame after
+  // a relevant change (cellSize, doc geometry) returns the un-pixelated
+  // geometry as a placeholder while the raster fires off; when the
+  // cache fills it notifies here so we re-render and the next expand()
+  // hits the cache. Bump a counter to force a render — the value is
+  // unused, just the state change triggers React.
+  const [, forceRender] = useState(0);
+  useEffect(() => {
+    return subscribePixelate(() => forceRender((n) => n + 1));
   }, []);
 
   // ---------- keyboard shortcuts ----------

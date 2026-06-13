@@ -105,8 +105,16 @@ function ClipPathDef({ def }: { def: ClipDef }) {
   );
 }
 
-function NodeContent({ node, allNodes }: { node: Node; allNodes: Node[] }) {
-  const { instances, clipDefs } = expandNode(node, allNodes);
+function NodeContent({
+  node,
+  allNodes,
+  docSize,
+}: {
+  node: Node;
+  allNodes: Node[];
+  docSize: { width: number; height: number };
+}) {
+  const { instances, clipDefs } = expandNode(node, allNodes, docSize);
   return (
     <Fragment>
       {clipDefs.length > 0 && (
@@ -243,7 +251,11 @@ export function DocSvg({
                 selectedNodeId === node.id ? "1px dashed rgba(255,255,255,0.4)" : undefined,
             }}
           >
-            <NodeContent node={node} allNodes={doc.nodes} />
+            <NodeContent
+              node={node}
+              allNodes={doc.nodes}
+              docSize={{ width: doc.width, height: doc.height }}
+            />
           </g>
         ) : null,
       )}

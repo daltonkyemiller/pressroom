@@ -108,17 +108,26 @@ export function getBooleanHiddenIds(nodes: readonly Node[]): Set<number> {
   return hidden;
 }
 
-export function expandNode(node: Node, allNodes: readonly Node[] = []): Expanded {
+// Fallback used when expandNode is called without an explicit doc size.
+// Most render-and-replace modifiers (pixelate) only matter when wired
+// up from the real render/export paths, both of which pass real dims.
+const DEFAULT_DOC_SIZE = { width: 800, height: 800 } as const;
+
+export function expandNode(
+  node: Node,
+  allNodes: readonly Node[] = [],
+  docSize: { width: number; height: number } = DEFAULT_DOC_SIZE,
+): Expanded {
   const clipDefs: ClipDef[] = [];
   // Seed instances differ for primitive vs group: a primitive node seeds
   // from its own primitive (with barStack contributing N intrinsic bars);
   // a group seeds from the concatenation of its children's expansions.
-  let instances: Instance[] = seedInstances(node, allNodes, clipDefs);
+  let instances: Instance[] = seedInstances(node, allNodes, clipDefs, docSize);
   const pivot = getNodePivot(node);
 
   for (const mod of node.modifiers) {
     if (!mod.enabled) continue;
-    instances = applyModifier(instances, mod, clipDefs, node, allNodes, pivot);
+    instances = applyModifier(instances, mod, clipDefs, node, allNodes, pivot, docSize);
   }
 
   // Group opacity multiplies into each instance's opacity at the very end.
@@ -136,6 +145,7 @@ function seedInstances(
   node: Node,
   allNodes: readonly Node[],
   clipDefs: ClipDef[],
+  docSize: { width: number; height: number },
 ): Instance[] {
   if (node.kind === "group") {
     if (!node.enabled) return [];
@@ -147,7 +157,7 @@ function seedInstances(
     for (let i = node.children.length - 1; i >= 0; i--) {
       const child = node.children[i];
       if (!child.enabled) continue;
-      const expanded = expandNode(child, allNodes);
+      const expanded = expandNode(child, allNodes, docSize);
       clipDefs.push(...expanded.clipDefs);
       out.push(...expanded.instances);
     }
@@ -200,6 +210,7 @@ function applyModifier(
   node: Node,
   allNodes: readonly Node[],
   pivot: { x: number; y: number },
+  docSize: { width: number; height: number },
 ): Instance[] {
   // Registry lookup replaces the 8-arm switch. The modifier module owns
   // its own apply logic; the engine just supplies a context bag of
@@ -209,10 +220,11 @@ function applyModifier(
     node,
     allNodes,
     pivot,
+    docSize,
     composeTransform,
     hash,
     hashSigned,
-    expandNode,
+    expandNode: (n, all) => expandNode(n, all, docSize),
     clipDefs,
   });
 }

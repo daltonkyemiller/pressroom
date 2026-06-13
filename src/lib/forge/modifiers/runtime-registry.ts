@@ -10,6 +10,7 @@ import { scatter, type ScatterParams } from "./scatter/runtime";
 import { colorCycle, type ColorCycleParams } from "./colorCycle/runtime";
 import { clip, type ClipParams } from "./clip/runtime";
 import { boolean, type BooleanParams } from "./boolean/runtime";
+import { pixelate, type PixelateParams } from "./pixelate/runtime";
 
 export const MODIFIERS_RUNTIME = {
   linearRepeat,
@@ -20,6 +21,7 @@ export const MODIFIERS_RUNTIME = {
   colorCycle,
   clip,
   boolean,
+  pixelate,
 } as const;
 
 export type ModifierKind = keyof typeof MODIFIERS_RUNTIME;
@@ -33,10 +35,11 @@ export type ModifierParamsByKind = {
   colorCycle: ColorCycleParams;
   clip: ClipParams;
   boolean: BooleanParams;
+  pixelate: PixelateParams;
 };
 
 // Display order for the "+ Add modifier" menu. Curated for UX (repeats
-// grouped, color/clip/boolean as more transformative ones).
+// grouped, color/clip/boolean/pixelate as more transformative ones).
 export const MODIFIER_KINDS: readonly ModifierKind[] = [
   "linearRepeat",
   "radialRepeat",
@@ -46,6 +49,7 @@ export const MODIFIER_KINDS: readonly ModifierKind[] = [
   "colorCycle",
   "clip",
   "boolean",
+  "pixelate",
 ];
 
 export function modifierFor<K extends ModifierKind>(

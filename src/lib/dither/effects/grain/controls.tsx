@@ -11,7 +11,7 @@ export const GrainControls: ControlsComponent<GrainParams> = ({
   <>
     <SliderControl name="amount" min={0} max={100} value={p.amount}
       onStart={onStart} onCommit={onCommit} onChange={(v) => onPatch({ amount: v })} />
-    <SliderControl name="size" min={0.5} max={6} step={0.1} value={p.size} unit="px"
+    <SliderControl name="size" min={0.1} max={6} step={0.05} value={p.size} unit="px"
       onStart={onStart} onCommit={onCommit} onChange={(v) => onPatch({ size: v })} />
     <SliderControl name="roughness" min={0} max={100} value={p.roughness} unit="%"
       onStart={onStart} onCommit={onCommit} onChange={(v) => onPatch({ roughness: v })} />

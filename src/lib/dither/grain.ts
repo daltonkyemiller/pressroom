@@ -102,9 +102,18 @@ export function applyGrain(img: ImageData, p: GrainParams): ImageData {
   const ratio = p.aspect / 100;
   const stretchX = Math.pow(2, ratio);
   const stretchY = Math.pow(2, -ratio);
-  const baseSize = Math.max(0.5, p.size);
-  const nw = Math.max(1, Math.round(w / (baseSize * stretchX)));
-  const nh = Math.max(1, Math.round(h / (baseSize * stretchY)));
+  const baseSize = Math.max(0.1, p.size);
+  // Cap the noise grid at the output resolution. Below this cap, baseSize
+  // < 1 would generate a *denser* noise field than the source — but
+  // bilinear sampling between denser noise values just averages them,
+  // smoothing the result instead of producing finer grain. Worse, at very
+  // small baseSize the array allocation alone would crash (size=0.1 on a
+  // 1800px preview wants 243M floats ≈ 1GB). Capping at w/h means
+  // "one noise value per output pixel" is the visual floor — the genuinely
+  // finest grain the bilinear path can produce. The slider goes down to
+  // 0.1 anyway so users can see the curve flatten there.
+  const nw = Math.min(w, Math.max(1, Math.round(w / (baseSize * stretchX))));
+  const nh = Math.min(h, Math.max(1, Math.round(h / (baseSize * stretchY))));
 
   // Always generate 3 channels — we mix between mono and color per pixel.
   const noise = new Float32Array(nw * nh * 3);

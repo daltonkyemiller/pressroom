@@ -22,6 +22,7 @@ import { TextControls } from "./text/controls";
 import { StippleControls } from "./stipple/controls";
 import { RisoControls } from "./riso/controls";
 import { DuotoneControls } from "./duotone/controls";
+import { DirtControls } from "./dirt/controls";
 
 export const EFFECTS_CONTROLS = {
   blur: BlurControls,
@@ -40,6 +41,7 @@ export const EFFECTS_CONTROLS = {
   stipple: StippleControls,
   riso: RisoControls,
   duotone: DuotoneControls,
+  dirt: DirtControls,
 } as const;
 
 export function controlsFor<K extends EffectKind>(

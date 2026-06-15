@@ -47,6 +47,7 @@ export type { EdgeBleedParams } from "./effects/edgeBleed/runtime";
 export type { TextParams } from "./effects/text/runtime";
 export type { StippleParams } from "./effects/stipple/runtime";
 export type { RisoParams } from "./effects/riso/runtime";
+export type { DirtParams } from "./effects/dirt/runtime";
 // Already-extracted effects re-export through the registry's import paths.
 export type { ProgressiveBlurParams } from "./progressive-blur";
 export type { GrainParams } from "./grain";

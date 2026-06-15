@@ -39,6 +39,7 @@ import { stipple, type StippleParams } from "./stipple/runtime";
 import { riso, type RisoParams } from "./riso/runtime";
 import { duotone } from "./duotone/runtime";
 import type { DuotoneParams } from "../shader-duotone";
+import { dirt, type DirtParams } from "./dirt/runtime";
 
 // One line per kind. TypeScript verifies each value's `kind` matches its key
 // and each module has the right shape. The registry is the source of truth;
@@ -60,6 +61,7 @@ export const EFFECTS_RUNTIME = {
   stipple,
   riso,
   duotone,
+  dirt,
 } as const;
 
 export type EffectKind = keyof typeof EFFECTS_RUNTIME;
@@ -81,6 +83,7 @@ export type ParamsByKind = {
   stipple: StippleParams;
   riso: RisoParams;
   duotone: DuotoneParams;
+  dirt: DirtParams;
 };
 
 // The display order used by the "+ Add effect" menu in app.tsx. Hand-
@@ -103,6 +106,7 @@ export const EFFECT_KINDS: readonly EffectKind[] = [
   "invert",
   "noise",
   "grain",
+  "dirt",
 ];
 
 export function effectFor<K extends EffectKind>(

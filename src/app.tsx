@@ -342,16 +342,34 @@ export default function App() {
     const startX = e.clientX;
     const startY = e.clientY;
     const startPanState = { ...pan };
+    const panPointerId = e.pointerId;
     const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== panPointerId) return;
       setPan({ x: startPanState.x + (ev.clientX - startX), y: startPanState.y + (ev.clientY - startY) });
     };
-    const onUp = () => {
+    const cleanup = () => {
       setPanning(false);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      window.removeEventListener("pointerdown", onSecondPointer);
+    };
+    const onUp = (ev: PointerEvent) => {
+      if (ev.pointerId !== panPointerId) return;
+      cleanup();
+    };
+    // If a second touch lands while panning, bail so the pinch hook
+    // can take over cleanly — otherwise pan keeps tracking finger #1
+    // and the canvas swims around mid-pinch.
+    const onSecondPointer = (ev: PointerEvent) => {
+      if (ev.pointerId === panPointerId) return;
+      if (ev.pointerType === "mouse") return;
+      cleanup();
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    window.addEventListener("pointerdown", onSecondPointer);
   };
 
   // ---------- sample image on mount ----------
@@ -842,7 +860,7 @@ export default function App() {
               onPointerDown={startPan}
               onDoubleClick={resetZoom}
               className={cn(
-                "relative will-change-transform",
+                "relative touch-none will-change-transform",
                 zoom > 1 ? (panning ? "cursor-grabbing" : "cursor-grab") : "cursor-default",
               )}
               style={{

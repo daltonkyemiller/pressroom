@@ -609,16 +609,33 @@ export default function ForgeApp() {
     const startX = e.clientX;
     const startY = e.clientY;
     const startPan = { ...panRef.current };
+    const panPointerId = e.pointerId;
     const onMove = (ev: PointerEvent) => {
+      if (ev.pointerId !== panPointerId) return;
       setPan({ x: startPan.x + (ev.clientX - startX), y: startPan.y + (ev.clientY - startY) });
     };
-    const onUp = () => {
+    const cleanup = () => {
       setPanning(false);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      window.removeEventListener("pointerdown", onSecondPointer);
+    };
+    const onUp = (ev: PointerEvent) => {
+      if (ev.pointerId !== panPointerId) return;
+      cleanup();
+    };
+    // A second touch arriving means the user is starting a pinch —
+    // bail so usePinchZoom takes over without the canvas mid-swim.
+    const onSecondPointer = (ev: PointerEvent) => {
+      if (ev.pointerId === panPointerId) return;
+      if (ev.pointerType === "mouse") return;
+      cleanup();
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    window.addEventListener("pointerdown", onSecondPointer);
   };
 
   const resetView = useCallback(() => {
@@ -833,7 +850,7 @@ export default function ForgeApp() {
 
         <div
           ref={stageRef}
-          className="relative flex flex-1 items-center justify-center overflow-hidden p-10"
+          className="relative flex flex-1 touch-none items-center justify-center overflow-hidden p-10"
           style={{ cursor: spaceHeld ? (panning ? "grabbing" : "grab") : undefined }}
           onPointerDown={(e) => {
             // Pan if:

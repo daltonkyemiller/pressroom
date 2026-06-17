@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <!-- Home-screen / PWA icon. Solid cream tile so it doesn't disappear
+       into a dark wallpaper, dark halftone-dot grid in the maskable
+       safe zone (inset 16px ≈ 8.3% from each edge — comfortably inside
+       Apple's ~10% mask trim). -->
+  <rect width="192" height="192" fill="#f5f0e0"/>
+  <g fill="#0a0a0a">
+    <circle cx="38" cy="38" r="9"/>
+    <circle cx="96" cy="38" r="14"/>
+    <circle cx="154" cy="38" r="19"/>
+    <circle cx="38" cy="96" r="14"/>
+    <circle cx="96" cy="96" r="19"/>
+    <circle cx="154" cy="96" r="23"/>
+    <circle cx="38" cy="154" r="19"/>
+    <circle cx="96" cy="154" r="23"/>
+    <circle cx="154" cy="154" r="25"/>
+  </g>
+</svg>

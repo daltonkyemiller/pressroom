@@ -45,14 +45,21 @@ export default defineConfig({
         theme_color: "#0a0a0a",
         orientation: "any",
         icons: [
+          // Home-screen tile. Solid cream background + dark dots so it
+          // doesn't disappear into a dark wallpaper — iOS rasterizes
+          // the icon at install time and ignores any prefers-color-
+          // scheme media queries inside the SVG, so adaptive icons
+          // wouldn't survive there. Same file serves both `any` and
+          // `maskable` because the dot grid stays well inside the
+          // safe zone (16px inset on a 192-unit viewBox).
           {
-            src: "/favicon.svg",
+            src: "/icon-512.svg",
             sizes: "any",
             type: "image/svg+xml",
             purpose: "any",
           },
           {
-            src: "/favicon.svg",
+            src: "/icon-512.svg",
             sizes: "any",
             type: "image/svg+xml",
             purpose: "maskable",

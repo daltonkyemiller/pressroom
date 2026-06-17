@@ -30,6 +30,7 @@ import {
 } from "@/lib/dither/effects";
 import { computeWorkDims, exportPNG, renderPipelineAsync } from "@/lib/dither/pipeline";
 import { initBuiltInFonts } from "@/lib/dither/font-registry";
+import { usePinchZoom } from "@/lib/use-pinch-zoom";
 import type { Edge } from "@atlaskit/pragmatic-drag-and-drop-hitbox/closest-edge";
 
 // All effect params are authored against this reference resolution.
@@ -308,6 +309,19 @@ export default function App() {
     setPan({ x: 0, y: 0 });
   }, []);
 
+  // Two-finger pinch + pan on the canvas wrap. Mouse pointers are
+  // ignored so the wheel / drag handlers above keep working — this
+  // only fires for touch + pen, which is the actual gap.
+  usePinchZoom({
+    targetRef: canvasWrapRef,
+    zoomRef,
+    panRef,
+    onZoom: setZoom,
+    onPan: setPan,
+    minZoom: ZOOM_MIN,
+    maxZoom: ZOOM_MAX,
+  });
+
   const startPan = (e: React.PointerEvent) => {
     if (zoom <= 1 && e.button === 0) {
       // At natural zoom there's nothing to pan, so a hold becomes the
@@ -517,7 +531,13 @@ export default function App() {
     const file = new File([blob], `pressroom-${Date.now()}.png`, {
       type: "image/png",
     });
-    const data = { files: [file], title: "pressroom", text: "" };
+    // Pass ONLY files — no title / no text. On iOS Safari, picking
+    // "Copy" from the share sheet prefers the text field over the
+    // file, so any title we attach ends up on the clipboard as
+    // literal text instead of the image. Files-only also makes the
+    // sheet skip the "share text" affordances and go straight to
+    // the image-aware targets (Photos, Messages, Files, AirDrop).
+    const data: ShareData = { files: [file] };
     const canShare =
       typeof navigator !== "undefined" &&
       typeof navigator.canShare === "function" &&

@@ -161,5 +161,16 @@
   }
   body {
     @apply font-sans text-sm;
+    /* Standalone PWA on iPad sits under the status bar (top) and home
+       indicator (bottom) by default. Reserving the safe-area insets at
+       the body level pushes every route's content inboard so top bars
+       aren't hidden by the clock and the bottom status row isn't
+       clipped by the home indicator. background-color extends behind
+       the inset so the safe-area strip matches the app chrome. */
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    box-sizing: border-box;
   }
 }

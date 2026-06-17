@@ -31,6 +31,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ColorControl, SliderControl, ToggleControl } from "@/components/dither/controls";
 import { cn } from "@/lib/utils";
+import { usePinchZoom } from "@/lib/use-pinch-zoom";
 import { DocSvg } from "@/lib/forge/render";
 import { getPrimitiveCenter } from "@/lib/forge/engine";
 import { downloadPng, downloadSvg } from "@/lib/forge/export";
@@ -587,6 +588,19 @@ export default function ForgeApp() {
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
   }, []);
+
+  // Two-finger pinch + pan on the stage. Mouse pointers are ignored so
+  // the wheel-zoom and middle-click / space+drag handlers above all
+  // keep behaving the same way for desktop input.
+  usePinchZoom({
+    targetRef: stageRef,
+    zoomRef,
+    panRef,
+    onZoom: setZoom,
+    onPan: setPan,
+    minZoom: ZOOM_MIN,
+    maxZoom: ZOOM_MAX,
+  });
 
   const startPan = (e: React.PointerEvent) => {
     if (e.button !== 0 && e.button !== 1) return;

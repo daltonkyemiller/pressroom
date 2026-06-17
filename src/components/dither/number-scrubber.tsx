@@ -121,7 +121,14 @@ function NumberScrubber({
     }
 
     const element = event.currentTarget;
-    element.setPointerCapture(event.pointerId);
+    const pointerId = event.pointerId;
+    // For touch / pen on iOS Safari, suppress the default tap/long-press
+    // gesture handling. Without this, the OS can decide mid-drag that
+    // you're starting a magnifier / lookup / context-menu and silently
+    // stop firing further pointer events — which is the "drag stays
+    // active until I click off it" stickiness.
+    if (event.pointerType !== "mouse") event.preventDefault();
+    element.setPointerCapture(pointerId);
     document.body.classList.add("dragging");
     onInteractStart?.();
 
@@ -138,6 +145,7 @@ function NumberScrubber({
     let lastX = event.clientX;
 
     const handlePointerMove = (moveEvent: PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
       const speed = moveEvent.shiftKey ? 0.1 : 1;
       const dx = moveEvent.clientX - lastX;
       lastX = moveEvent.clientX;
@@ -149,15 +157,51 @@ function NumberScrubber({
       onValueChange(snapValue(accumulated, min, max, step, snapPoints));
     };
 
-    const handlePointerUp = () => {
+    let ended = false;
+    const cleanup = () => {
+      if (ended) return;
+      ended = true;
       document.body.classList.remove("dragging");
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
+      element.removeEventListener("pointermove", handlePointerMove);
+      element.removeEventListener("pointerup", handlePointerUp);
+      element.removeEventListener("pointercancel", handlePointerUp);
+      element.removeEventListener("lostpointercapture", handleLostCapture);
+      window.removeEventListener("pointerup", handleWindowUp);
+      try {
+        if (element.hasPointerCapture(pointerId)) {
+          element.releasePointerCapture(pointerId);
+        }
+      } catch {
+        // releasePointerCapture can throw if the capture was already
+        // released (lostpointercapture race) — safe to ignore.
+      }
       onInteractEnd?.();
     };
 
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
+    const handlePointerUp = (e: PointerEvent) => {
+      if (e.pointerId !== pointerId) return;
+      cleanup();
+    };
+    const handleLostCapture = (e: Event) => {
+      const pe = e as PointerEvent;
+      if (pe.pointerId !== pointerId) return;
+      cleanup();
+    };
+    // Window-level pointerup is a defensive backstop. When pointer
+    // capture is active the captured element gets the events, but on
+    // some iOS gesture-cancel paths the capture is released early and
+    // the up event lands on the window instead — without this
+    // listener the drag would stay armed.
+    const handleWindowUp = (e: PointerEvent) => {
+      if (e.pointerId !== pointerId) return;
+      cleanup();
+    };
+
+    element.addEventListener("pointermove", handlePointerMove);
+    element.addEventListener("pointerup", handlePointerUp);
+    element.addEventListener("pointercancel", handlePointerUp);
+    element.addEventListener("lostpointercapture", handleLostCapture);
+    window.addEventListener("pointerup", handleWindowUp);
   };
 
   const handleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -176,7 +220,7 @@ function NumberScrubber({
     <div className={cn("space-y-1.5 select-none", className)}>
       <div
         className={cn(
-          "group border-input bg-muted/60 relative flex h-8 cursor-ew-resize select-none items-center rounded-none border text-xs transition-[border-color,box-shadow,background-color]",
+          "group border-input bg-muted/60 relative flex h-8 cursor-ew-resize touch-none select-none items-center rounded-none border text-xs transition-[border-color,box-shadow,background-color]",
           "before:bg-foreground/15 before:absolute before:inset-y-0 before:left-0 before:w-(--scrubber-progress)",
           "hover:border-ring/70 focus-within:border-ring focus-within:ring-ring/30 focus-within:ring-1",
           disabled && "pointer-events-none cursor-not-allowed opacity-50",

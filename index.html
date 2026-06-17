@@ -3,7 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover so the standalone PWA fills the iPad safe
+         area; user-scalable=no kills the pinch-zoom-on-the-page gesture
+         that fights canvas zoom + makes the scrubbers feel slippery. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no, interactive-widget=resizes-content"
+    />
+    <meta name="theme-color" content="#0a0a0a" />
+    <!-- iOS Safari needs these to treat the installed PWA as
+         standalone-borderless instead of a tab. apple-touch-icon
+         accepts SVG on iPadOS 17+; on older devices Safari just
+         falls back to a generated screenshot — fine for now. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Pressroom" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
     <title>pressroom</title>
   </head>
   <body>

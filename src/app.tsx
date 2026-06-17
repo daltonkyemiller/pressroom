@@ -453,6 +453,47 @@ export default function App() {
     reader.readAsDataURL(file);
   }, []);
 
+  // ---------- inbound Web Share Target ----------
+  // The service worker stashes the shared file under `/_shared/image`
+  // in the Cache API and redirects here with `?share=1`. On that
+  // signal, fetch the stashed Response (which streams the original
+  // bytes), pull its Content-Type + filename header, hand it off to
+  // loadFile, then evict the cache entry and strip the query so
+  // refreshing doesn't re-trigger.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const sp = new URLSearchParams(window.location.search);
+    if (sp.get("share") !== "1") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const cache = await caches.open("pressroom-shared-files");
+        const cached = await cache.match("/_shared/image");
+        if (cached && !cancelled) {
+          const blob = await cached.blob();
+          const filenameHeader = cached.headers.get("X-Pressroom-Filename");
+          const filename = filenameHeader
+            ? decodeURIComponent(filenameHeader)
+            : "shared-image";
+          const file = new File([blob], filename, { type: blob.type });
+          loadFile(file);
+          await cache.delete("/_shared/image");
+        }
+      } catch (err) {
+        console.warn("pressroom: failed to load shared file", err);
+      } finally {
+        // Drop the ?share=1 from the URL so a refresh doesn't pop a
+        // stale-cache hit or sit on a confusing query param.
+        const url = new URL(window.location.href);
+        url.searchParams.delete("share");
+        window.history.replaceState(null, "", url.toString());
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadFile]);
+
   // ---------- export ----------
   const onExport = useCallback(async () => {
     if (!sourceImage) return;
@@ -460,6 +501,39 @@ export default function App() {
     if (!blob) return;
     const link = document.createElement("a");
     link.download = `dither-stack-${Date.now()}.png`;
+    link.href = URL.createObjectURL(blob);
+    link.click();
+  }, [sourceImage, layers]);
+
+  // ---------- outbound Web Share ----------
+  // `navigator.share({files})` opens the native share sheet so the
+  // user can send the PNG straight to Photos / Messages / Files /
+  // another app. Falls back to a clipboard-write notice if the host
+  // doesn't support file sharing (Firefox desktop, older Safari).
+  const onShare = useCallback(async () => {
+    if (!sourceImage) return;
+    const blob = await exportPNG(sourceImage, layers, REFERENCE_DIM);
+    if (!blob) return;
+    const file = new File([blob], `pressroom-${Date.now()}.png`, {
+      type: "image/png",
+    });
+    const data = { files: [file], title: "pressroom", text: "" };
+    const canShare =
+      typeof navigator !== "undefined" &&
+      typeof navigator.canShare === "function" &&
+      navigator.canShare(data);
+    if (canShare) {
+      try {
+        await navigator.share(data);
+        return;
+      } catch (err) {
+        // User cancelled or share threw — fall through to download
+        // fallback so they still get the file.
+        if ((err as { name?: string } | null)?.name === "AbortError") return;
+      }
+    }
+    const link = document.createElement("a");
+    link.download = file.name;
     link.href = URL.createObjectURL(blob);
     link.click();
   }, [sourceImage, layers]);
@@ -670,6 +744,16 @@ export default function App() {
           >
             <span>Export PNG</span>
             <IconArrowDownToLine className="size-3.5" />
+          </Button>
+          <Button
+            variant="outline"
+            size="default"
+            className="justify-between text-xs tracking-widest uppercase"
+            onClick={onShare}
+            disabled={!sourceImage}
+          >
+            <span>Share</span>
+            <IconArrowUpFromLine className="size-3.5" />
           </Button>
           <input
             ref={fileInputRef}
